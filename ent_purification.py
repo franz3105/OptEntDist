@@ -96,23 +96,23 @@ def bell_projectors_A1A2():
     return proj1, proj2, proj3, proj4
 
 
-def phased_bell_state(phi: float, state="00"):
-    if state == "00":
-        out = (qt.bell_state(state=state) * np.exp(-1j * phi) + qt.bell_state(state=state) * np.exp(1j * phi)) \
+def phased_bell_state(phi: float, state="+"):
+    if state == "+":
+        out = (qt.tensor(q_0, q_0) * np.exp(-1j * phi) + qt.tensor(q_1, q_1) * np.exp(1j * phi)) \
               / np.sqrt(2)
-    elif state == "11":
-        out = (qt.bell_state(state=state) * np.exp(-1j * phi) - qt.bell_state(state=state) * np.exp(1j * phi)) \
+    elif state == "-":
+        out = (qt.tensor(q_0, q_0) * np.exp(-1j * phi) - qt.tensor(q_1, q_1) * np.exp(1j * phi)) \
               / np.sqrt(2)
     else:
-        raise NotImplementedError("Only 00 and 11 are valid states")
+        raise NotImplementedError("Only + and - are valid states")
 
     return out
 
 
 def rho_zsolt(c: float):
-    gamma_sep = (1 / (np.sqrt(2))) * (qt.bell_state(state="00") + qt.bell_state(state="10"))
-    rho = c * pr01 + (1 - c) * gamma_sep * gamma_sep.dag()
-    return rho
+    gamma_sep = (1 / (np.sqrt(2))) * (1j * qt.bell_state(state="01") + qt.bell_state(state="10"))
+    rho = c * pr11 + (1 - c) * gamma_sep * gamma_sep.dag()
+    return rho / rho.tr()
 
 
 def rho_xy_phi(eta_damp, phi, n_photon):
@@ -122,10 +122,10 @@ def rho_xy_phi(eta_damp, phi, n_photon):
     y = np.exp(- n_photon * (1 - np.cos(2 * phi)) * (1 - eta_damp)) * np.sin(
         n_photon * np.sin(2 * phi) * (1 - eta_damp))
 
-    mix_phi = phased_bell_state(phi, state="11") * qt.bell_state(state="01").dag()
+    mix_phi = phased_bell_state(phi, state="-") * qt.bell_state(state="11").dag()
 
-    rho_out = (1 + x) * pr01 + (1 - x) * phased_bell_state(phi, state="11") * phased_bell_state(phi,
-                                                                                                state="11").dag() + \
+    rho_out = (1 + x) * pr11 + (1 - x) * phased_bell_state(phi, state="-") * phased_bell_state(phi,
+                                                                                               state="-").dag() + \
               1j * y * (mix_phi - mix_phi.dag())
 
     return rho_out / rho_out.tr(), x, y
@@ -133,14 +133,16 @@ def rho_xy_phi(eta_damp, phi, n_photon):
 
 def rho_xy(x, y, phase=np.pi / 2):
     # print(x, y, phase)
-    mix_phi = phased_bell_state(phase, state="11") * qt.bell_state(state="01").dag()
+    mix_phi = phased_bell_state(phase, state="-") * qt.bell_state(state="11").dag()
 
-    rho_out = (1 + x) * pr01 + (1 - x) * phased_bell_state(phase, state="11") * phased_bell_state(phase,
-                                                                                                  state="11").dag() + \
+    rho_out = (1 + x) * pr11 + (1 - x) * phased_bell_state(phase, state="-") * phased_bell_state(phase,
+                                                                                                 state="-").dag() + \
               1j * y * (mix_phi - mix_phi.dag())
 
-    print(f"State: {rho_out}")
-    return rho_out / 4., x, y
+    # print(f"State: {rho_out}")
+    # print(pr11)
+    # print(rho_out.tr())
+    return rho_out / 2., x, y
 
 
 projectors_A1A2 = bell_projectors_A1A2()
@@ -181,6 +183,22 @@ def m2_A1A2(s: np.ndarray) -> qt.Qobj:
     return m
 
 
+def m3_A1A2(s: np.ndarray) -> qt.Qobj:
+    m = s[0] * projectors_A1A2[0] + \
+        s[1] * projectors_A1A2[1] + \
+        s[2] * projectors_A1A2[2] + \
+        s[3] * projectors_A1A2[3]
+    return m
+
+
+def m3_B1B2(s) -> qt.Qobj:
+    m = s[0] * projectors_B1B2[0] + \
+        s[1] * projectors_B1B2[1] + \
+        s[2] * projectors_B1B2[2] + \
+        s[3] * projectors_B1B2[3]
+    return qt.tensor(m)
+
+
 def m1_A1A2(s: np.ndarray) -> qt.Qobj:
     m = np.exp(1j * s[0]) * projectors_A1A2[0] + \
         np.exp(1j * s[1]) * projectors_A1A2[1] + \
@@ -195,6 +213,12 @@ def m1_B1B2(s) -> qt.Qobj:
         np.exp(1j * s[2]) * projectors_B1B2[2] + \
         np.exp(1j * s[3]) * projectors_B1B2[3]
     return qt.tensor(m)
+
+
+def m3(s: np.ndarray) -> qt.Qobj:
+    m_tot = m3_A1A2(s[:4]) * m3_B1B2(s[:4])
+
+    return m_tot
 
 
 def m1(s: np.ndarray) -> qt.Qobj:
@@ -213,7 +237,7 @@ def werner(F: float):
     return rho_werner
 
 
-def cost(rho_start: qt.Qobj, c: np.ndarray, M, n_iter=5):
+def cost(rho_start: qt.Qobj, c: np.ndarray, M, n_iter=1):
     x = c
 
     if M == m1:
@@ -221,87 +245,61 @@ def cost(rho_start: qt.Qobj, c: np.ndarray, M, n_iter=5):
     else:
         m = M(x)
 
-    #print(rho_start)
+    # print(rho_start)
     rho_init = qt.tensor(rho_start, rho_start)
+    # print(rho_init.eigenenergies())
+    # print(qt.concurrence(rho_start))
+    p = 1
+    proj_set = (proj_1, proj_2, proj_3, proj_4)
 
     for l in range(n_iter):
         # print(rho_init.tr())
         rho_1 = m * rho_init * m.dag() / ((m.dag() * m * rho_init).tr() + 1e-8)
         assert np.round(rho_1.tr(), 2) == 1.0
-        rho_new = proj_1 * rho_1 * proj_1.dag() / ((proj_1 * proj_1.dag() * rho_1).tr() + 1e-8)
         p_1 = (proj_1 * proj_1.dag() * rho_1).tr()
-        # print(p_1)
-        if p_1 > 1 or p_1 < 0:
-            raise ValueError("Probabilities cannot lie outside range [0,1]")
-        # print(rho_1.tr())
         p_2 = (proj_2 * proj_2.dag() * rho_1).tr()
         p_3 = (proj_3 * proj_3.dag() * rho_1).tr()
         p_4 = (proj_4 * proj_4.dag() * rho_1).tr()
+        # print(p_1)
+        idx = np.random.choice(4, p=np.round(np.array([p_1, p_2, p_3, p_4]), 2))
+        # idx=0
+        proj = proj_set[idx]
+        p = p * p_1
+        if p_1 > 1 or p_1 < 0:
+            raise ValueError("Probabilities cannot lie outside range [0,1]")
+        # print(rho_1.tr())
 
-        rho_tilde_1 = qt.bell_state(state="01").dag() * qt.ptrace(rho_new, [0, 1]) * qt.bell_state(state="01")
+        # print(p_1+p_2+p_3+p_4)
+        rho_new = proj * rho_1 * proj.dag() / ((proj * proj.dag() * rho_1).tr() + 1e-8)
+
+        # rho_tilde_1 = qt.bell_state(state="11").dag() * qt.ptrace(rho_new, [0, 1]) * qt.bell_state(state="11")
         # if np.round(1 - rho_tilde_1[0, 0] * p_1, 2) == 0:
         # if np.round(np.abs(3/2. - rho_tilde_1[0, 0] - p_1),2) == 0.0:
         #    print(p_1)
         #    print(p_2)
         #    print(rho_tilde_1[0,0])
-        if np.round(np.abs(1 - rho_tilde_1[0, 0]), 2) == 0:
-            print(f"Fidelity: {np.abs(rho_tilde_1[0, 0])}")
-            print(f"Probabiltiy {p_1}")
+        # if np.round(np.abs(1 - rho_tilde_1[0, 0]), 2) == 0:
+        # print(f"Fidelity: {np.abs(rho_tilde_1[0, 0])}")
+        # print(f"Probabiltiy {p_1}")
+        rho_init = qt.tensor(qt.ptrace(rho_new, [0, 1]), qt.ptrace(rho_new, [0, 1]))
 
-        rho_init = rho_new
+    concurrence = qt.concurrence(qt.ptrace(rho_new, [0, 1]))
+    # print(concurrence)
+    # fidelity = np.abs(rho_tilde_1[0, 0])
+    infidelity = (1 - concurrence)
+    cost_value = infidelity
+    # if cost_value > 1:
+    #    print(fidelity)
+    #    print(p_1)
 
-    return np.abs((1 - rho_tilde_1[0, 0]) / (p_1 + 1e-8)), np.abs(1 - rho_tilde_1[0, 0]), p_1
-
-
-def purify(rho_start: qt.Qobj, M,  c: np.ndarray, n_iter=1):
-    x = c
-
-    if M == m1:
-        m = M(x)
-    else:
-        m = M(x)
-    #print(rho_start)
-    rho_init = qt.tensor(rho_start, rho_start)
-
-    for l in range(n_iter):
-        # print(rho_init.tr())
-        rho_1 = m * rho_init * m.dag() / ((m.dag() * m * rho_init).tr() + 1e-8)
-        assert np.round(rho_1.tr(), 2) == 1.0
-        rho_new = proj_1 * rho_1 * proj_1.dag() / ((proj_1 * proj_1.dag() * rho_1).tr() + 1e-8)
-        p_1 = (proj_1 * proj_1.dag() * rho_1).tr()
-        # print(p_1)
-        if p_1 > 1 or p_1 < 0:
-            raise ValueError("Probabilities cannot lie outside range [0,1]")
-        # print(rho_1.tr())
-        p_2 = (proj_2 * proj_2.dag() * rho_1).tr()
-        p_3 = (proj_3 * proj_3.dag() * rho_1).tr()
-        p_4 = (proj_4 * proj_4.dag() * rho_1).tr()
-
-        rho_tilde_1 = qt.bell_state(state="01").dag() * qt.ptrace(rho_new, [0, 1]) * qt.bell_state(state="01")
-        # if np.round(1 - rho_tilde_1[0, 0] * p_1, 2) == 0:
-        # if np.round(np.abs(3/2. - rho_tilde_1[0, 0] - p_1),2) == 0.0:
-        #    print(p_1)
-        #    print(p_2)
-        #    print(rho_tilde_1[0,0])
-        if np.round(np.abs(1 - rho_tilde_1[0, 0]), 2) == 0:
-            print(f"Fidelity: {np.abs(rho_tilde_1[0, 0])}")
-            print(f"Probabiltiy {p_1}")
-
-        rho_init = rho_new
-
-    return rho_init
+    return cost_value, infidelity, p
 
 
-def probability(rho_start: qt.Qobj, M, c: np.ndarray,  n_iter=1):
-    rho_1 = purify(rho_start, M,c, n_iter=n_iter)
-    p_1 = (proj_1 * proj_1.dag() * rho_1).tr()
-    p_2 = (proj_2 * proj_2.dag() * rho_1).tr()
-    p_3 = (proj_3 * proj_3.dag() * rho_1).tr()
-    p_4 = (proj_4 * proj_4.dag() * rho_1).tr()
-    return p_1
+def probability(rho_start: qt.Qobj, M, c: np.ndarray):
+    p = cost(rho_start, c, M)[2]
+    return p
 
 
-def fidelity(rho_start: qt.Qobj, M, c: np.ndarray, n_iter=1):
-    rho_1 = purify(rho_start, M, c, n_iter=n_iter)
-    rho_tilde_1 = qt.bell_state(state="01").dag() * qt.ptrace(rho_1, [0, 1]) * qt.bell_state(state="01")
-    return np.abs((1 - rho_tilde_1[0, 0]))
+def infidelity(rho_start: qt.Qobj, M, c: np.ndarray):
+    cost_value = cost(rho_start, c, M)[0]
+    return cost_value

@@ -1,18 +1,28 @@
-import numpy as np
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
+from matplotlib import cm
+from matplotlib.ticker import LinearLocator
+import numpy as np
 import os
 from ent_purification import m1
 
-file = os.path.join("data", "ent_purif_xy_solutions05_31_2021_12_51_10.txt")
+fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
+
+file = os.path.join("data", "ent_purif_xy_solutions06_02_2021_17_38_04.txt")
 data = np.loadtxt(file)
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
-print(data[:, 8])
-ax.scatter(data[:, 9], data[:, 10], np.round(data[:, 11], 3))
+x = data[:, 7]
+y = data[:, 8]
+z = data[:, 6]
+print(x.shape)
+print(y.shape)
+print(z.shape)
+# x,y = np.meshgrid(x,y)
+ax.plot_trisurf(x, y, z, cmap=cm.coolwarm,
+                linewidth=0, antialiased=False)
+# ax_2 = fig.add_subplot(110, projection='3d')
+# ax_2.scatter(data[:, 5], data[:, 7], np.round(data[:, 8], 3))
 ax.set_xlabel('X axis')
 ax.set_ylabel('Y axis')
-ax.set_zlabel(r'1 - F')
+ax.set_zlabel(r'1 - p')
 plt.show()
 
 for s in data[:, :8]:
@@ -38,4 +48,4 @@ ax.scatter(data[:, 5], data[:, 6], dist_plot)
 ax.set_xlabel('X')
 ax.set_ylabel('Y')
 ax.set_zlabel('Average Frobenius distance')
-#plt.show()
+# plt.show()
