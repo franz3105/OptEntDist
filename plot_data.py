@@ -7,7 +7,7 @@ from ent_purification import m1
 
 fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
 
-file = os.path.join("data", "ent_purif_xy_solutions06_02_2021_17_38_04.txt")
+file = os.path.join("data", "ent_purif_xy_solutions06_16_2021_13_13_19.txt")
 data = np.loadtxt(file)
 x = data[:, 7]
 y = data[:, 8]

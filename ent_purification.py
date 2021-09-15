@@ -237,42 +237,56 @@ def werner(F: float):
     return rho_werner
 
 
-def cost(rho_start: qt.Qobj, c: np.ndarray, M, n_iter=1):
-    x = c
-
-    if M == m1:
-        m = M(x)
-    else:
-        m = M(x)
+def cost(rho_start: qt.Qobj, x: np.ndarray, M, n_iter=2):
+    #assert x.shape[0] % n_iter == 0
+    n_op_params = 4  # int((x.shape[0] / n_iter))
 
     # print(rho_start)
     rho_init = qt.tensor(rho_start, rho_start)
+    # print(qt.concurrence(qt.ptrace(rho_init, [0, 1])))
     # print(rho_init.eigenenergies())
     # print(qt.concurrence(rho_start))
-    p = 1
-    proj_set = (proj_1, proj_2, proj_3, proj_4)
+    p0 = 1
+    proj_set = (proj_1, proj_2)
+    p_set = [[1, ] * 2 ** i_lvl for i_lvl in range(n_iter+2)]
+    rho_set = [[None, ] * 2 ** i_lvl for i_lvl in range(n_iter+2)]
 
-    for l in range(n_iter):
-        # print(rho_init.tr())
-        rho_1 = m * rho_init * m.dag() / ((m.dag() * m * rho_init).tr() + 1e-8)
-        assert np.round(rho_1.tr(), 2) == 1.0
-        p_1 = (proj_1 * proj_1.dag() * rho_1).tr()
-        p_2 = (proj_2 * proj_2.dag() * rho_1).tr()
-        p_3 = (proj_3 * proj_3.dag() * rho_1).tr()
-        p_4 = (proj_4 * proj_4.dag() * rho_1).tr()
-        # print(p_1)
-        idx = np.random.choice(4, p=np.round(np.array([p_1, p_2, p_3, p_4]), 2))
-        # idx=0
-        proj = proj_set[idx]
-        p = p * p_1
-        if p_1 > 1 or p_1 < 0:
-            raise ValueError("Probabilities cannot lie outside range [0,1]")
-        # print(rho_1.tr())
+    p_set[0][0] = p0
+    rho_set[0][0] = rho_init
 
-        # print(p_1+p_2+p_3+p_4)
-        rho_new = proj * rho_1 * proj.dag() / ((proj * proj.dag() * rho_1).tr() + 1e-8)
+    for l in range(n_iter+1):
+        m = M(x[l * n_op_params:(l + 1) * n_op_params])
 
-        # rho_tilde_1 = qt.bell_state(state="11").dag() * qt.ptrace(rho_new, [0, 1]) * qt.bell_state(state="11")
+        for i_p, p in enumerate(p_set[l]):
+            #print(i_p)
+
+            for i_proj, proj in enumerate(proj_set):
+                #print(l, i_p)
+                rho_0 = rho_set[l][i_p]
+                rho_1 = m * rho_0 * m.dag() / ((m.dag() * m * rho_0).tr() + 1e-8)
+                assert np.round(rho_1.tr(), 2) == 1.0
+                prob = (proj * proj.dag() * rho_1).tr()
+                rho_new_ip = proj * rho_1 * proj.dag() / ((proj * proj.dag() * rho_1).tr() + 1e-8)
+
+                # print(p_1)
+                # print(p_1+p_2+p_3+p_4)
+                # print(np.round(np.array([p_1, p_2, p_3, p_4]), 2))
+                # idx=0
+                #print(rho_set)
+                p_set[l+1][2*i_p + i_proj] = prob*p_set[l][i_p]
+                rho_set[l+1][2*i_p + i_proj] = rho_new_ip
+                #print(p_set)
+
+                # print(p_set)
+                if prob > 1 or prob < 0:
+                    raise ValueError("Probabilities cannot lie outside range [0,1]")
+                # print(rho_1.tr())
+        #print(p_set)
+
+        # rho_tilde_1 = qt.bel        pool = mp.Pool(NUM_CORES)
+        #         actions = pool.map(self.single_step, (arg for arg in zip(self.envs, actions)))
+        #         pool.close()
+        #         pool.join()l_state(state="11").dag() * qt.ptrace(rho_new, [0, 1]) * qt.bell_state(state="11")
         # if np.round(1 - rho_tilde_1[0, 0] * p_1, 2) == 0:
         # if np.round(np.abs(3/2. - rho_tilde_1[0, 0] - p_1),2) == 0.0:
         #    print(p_1)
@@ -281,18 +295,23 @@ def cost(rho_start: qt.Qobj, c: np.ndarray, M, n_iter=1):
         # if np.round(np.abs(1 - rho_tilde_1[0, 0]), 2) == 0:
         # print(f"Fidelity: {np.abs(rho_tilde_1[0, 0])}")
         # print(f"Probabiltiy {p_1}")
-        rho_init = qt.tensor(qt.ptrace(rho_new, [0, 1]), qt.ptrace(rho_new, [0, 1]))
 
+    p_last_lvl = np.array(p_set[-1])
+    idx = np.argmax(p_last_lvl) - 1
+    rho_new = rho_set[-1][idx]
+    p = p_last_lvl[idx]
+
+    #print(rho_new)
     concurrence = qt.concurrence(qt.ptrace(rho_new, [0, 1]))
     # print(concurrence)
     # fidelity = np.abs(rho_tilde_1[0, 0])
-    infidelity = (1 - concurrence)
-    cost_value = infidelity
+    # print(infidelity)
+    cost_value = 1 - concurrence
     # if cost_value > 1:
     #    print(fidelity)
     #    print(p_1)
 
-    return cost_value, infidelity, p
+    return cost_value, cost_value, p
 
 
 def probability(rho_start: qt.Qobj, M, c: np.ndarray):

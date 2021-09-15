@@ -5,14 +5,14 @@ import datetime
 import matplotlib.pyplot as plt
 
 from scipy.optimize import minimize, basinhopping
-from ent_purification import cost, rho_xy_phi, rho_xy, m1, m2, m3
+from ent_purification import cost, rho_xy_phi, rho_xy, m1, m2, m3, rho_zsolt
 
 counter = 0
 
 
 def optimize(rho, c_ops):
     function = lambda x: cost(rho, x, c_ops)[0]
-    dim = 4
+    dim = 12
     init_values = np.random.randn(dim)
     history = list()
     counter = 0
@@ -24,8 +24,8 @@ def optimize(rho, c_ops):
 
     # res = basinhopping(function, init_values, minimizer_kwargs=minimizer_kwargs,
     #                   niter=30, disp=True)
+    print(function(init_values))
     res = minimize(function, x0=init_values, method="l-bfgs-b", callback=store)
-    print(res.fun)
     _, infidelity, prob = cost(rho, res.x, c_ops)
     print(infidelity, prob)
     return res.x, res.fun, infidelity, prob
@@ -57,7 +57,7 @@ def simulate_rho_xy_phi():
 def simulate_rho_xy():
     solutions = []
     n_guess = 10
-    n_samples = 2
+    n_samples = 10000
     x_array = np.zeros(n_samples)
     y_array = np.zeros(n_samples)
     phi = np.random.randn()
@@ -73,13 +73,13 @@ def simulate_rho_xy():
 
     plt.scatter(x_array, y_array)
     plt.show()
-    counter = 0
+    ctr = 0
     for idx in range(n_samples):
         x = x_array[idx]
         y = y_array[idx]
-        counter = counter + 1
-        print(counter)
-        print(phi, x, y, x**2 + y**2)
+        ctr = ctr + 1
+        print(ctr)
+        print(phi, x, y, x ** 2 + y ** 2)
         rho, x_out, y_out = rho_xy(x, y, phase=phi)
         best_values, best_error, best_infidelity, best_prob = None, 1., 1., 0.
         for b in range(n_guess):
@@ -91,6 +91,31 @@ def simulate_rho_xy():
                 best_prob = prob
 
         solutions.append(np.append(best_values, np.array([best_error, best_infidelity, best_prob, x, y])))
+
+    return solutions
+
+
+def simulate_rho_c():
+    solutions = []
+    n_guess = 10
+    n_samples = 1000
+
+    c = np.random.uniform(-1, 1, n_samples)
+
+    ctr = 0
+    for idx in range(n_samples):
+        ctr = ctr + 1
+        rho = rho_zsolt(c[idx])
+        best_values, best_error, best_infidelity, best_prob = None, 1., 1., 0.
+        for b in range(n_guess):
+            opt_values, error, infidelity, prob = optimize(rho, m1)
+            if best_values is None or error < best_error:
+                best_values = opt_values
+                best_error = error
+                best_infidelity = infidelity
+                best_prob = prob
+
+        solutions.append(np.append(best_values, np.array([best_error, best_infidelity, best_prob, c[idx]])))
 
     return solutions
 
