@@ -237,7 +237,7 @@ def werner(F: float):
     return rho_werner
 
 
-def cost(rho_start: qt.Qobj, x: np.ndarray, M, n_iter=2):
+def cost(rho_start: qt.Qobj, x: np.ndarray, M, n_iter):
     #assert x.shape[0] % n_iter == 0
     n_op_params = 4  # int((x.shape[0] / n_iter))
 
@@ -255,7 +255,8 @@ def cost(rho_start: qt.Qobj, x: np.ndarray, M, n_iter=2):
     rho_set[0][0] = rho_init
 
     for l in range(n_iter+1):
-        m = M(x[l * n_op_params:(l + 1) * n_op_params])
+        #print(l)
+        m = M(x[l * n_op_params:(l+1) * n_op_params])
 
         for i_p, p in enumerate(p_set[l]):
             #print(i_p)
@@ -273,6 +274,7 @@ def cost(rho_start: qt.Qobj, x: np.ndarray, M, n_iter=2):
                 # print(np.round(np.array([p_1, p_2, p_3, p_4]), 2))
                 # idx=0
                 #print(rho_set)
+                #print(prob)
                 p_set[l+1][2*i_p + i_proj] = prob*p_set[l][i_p]
                 rho_set[l+1][2*i_p + i_proj] = rho_new_ip
                 #print(p_set)
@@ -303,15 +305,15 @@ def cost(rho_start: qt.Qobj, x: np.ndarray, M, n_iter=2):
 
     #print(rho_new)
     concurrence = qt.concurrence(qt.ptrace(rho_new, [0, 1]))
-    # print(concurrence)
     # fidelity = np.abs(rho_tilde_1[0, 0])
     # print(infidelity)
     cost_value = 1 - concurrence
+    #print(cost_value)
     # if cost_value > 1:
     #    print(fidelity)
     #    print(p_1)
 
-    return cost_value, cost_value, p
+    return cost_value, p
 
 
 def probability(rho_start: qt.Qobj, M, c: np.ndarray):

@@ -6,29 +6,23 @@ import matplotlib.pyplot as plt
 
 from scipy.optimize import minimize, basinhopping
 from ent_purification import cost, rho_xy_phi, rho_xy, m1, m2, m3, rho_zsolt
+import multiprocessing as mp
 
 counter = 0
 
 
-def optimize(rho, c_ops):
-    function = lambda x: cost(rho, x, c_ops)[0]
-    dim = 12
+def optimize(rho, c_ops, n_iter, q):
+    def opt_func(x):
+        return cost(rho, x, c_ops, n_iter - 1)[0]
+
+    dim = 4 * n_iter
     init_values = np.random.randn(dim)
-    history = list()
-    counter = 0
 
-    def store(x):
-        history.append(cost(rho, x, c_ops)[1:])
+    res = minimize(opt_func, x0=init_values, method="Nelder-Mead")
+    cost_value, prob = cost(rho, res.x, c_ops, n_iter - 1)
+    #print(concurrence)
 
-    minimizer_kwargs = {"method": "BFGS"}
-
-    # res = basinhopping(function, init_values, minimizer_kwargs=minimizer_kwargs,
-    #                   niter=30, disp=True)
-    print(function(init_values))
-    res = minimize(function, x0=init_values, method="l-bfgs-b", callback=store)
-    _, infidelity, prob = cost(rho, res.x, c_ops)
-    print(infidelity, prob)
-    return res.x, res.fun, infidelity, prob
+    q.put([res.fun, res.x, prob])
 
 
 def simulate_rho_xy_phi():
@@ -37,19 +31,33 @@ def simulate_rho_xy_phi():
     phi_array = np.linspace(0.1, np.pi, 40)
     eta_damp_array = np.linspace(0.1, 0.5, 1)
     n_photon_array = np.linspace(0, 1000, 10)
+    Q = mp.Queue()
     for phi in phi_array:
         for eta in eta_damp_array:
             for n in n_photon_array:
                 rho, x, y = rho_xy_phi(eta, phi, n)
+                jobs = []
                 for b in range(n_guess):
-                    best_values, best_error, best_infidelity, best_prob = None, 1., 1., 0.
-                    for b in range(n_guess):
-                        opt_values, error, infidelity, prob = optimize(rho, m1)
-                        if best_values is None or error < best_error:
-                            best_values = opt_values
-                            best_error = error
-                            best_infidelity = infidelity
-                            best_prob = prob
+                    p = mp.Process(target=optimize, args=(rho, m1, n_iter, Q))
+                    p.start()
+                    jobs.append(p)
+
+                for p in jobs:
+                    p.join()
+
+                results = [Q.get() for _ in range(n_guess)]
+                cost_minima = np.array([r[0] for r in results])
+                cost_args = np.array([r[1] for r in results])
+                probs = np.array([r[2] for r in results])
+
+                best_idx = int(np.argmin(np.asarray(cost_minima)))
+                best_values = cost_args[best_idx]
+                best_concurrence = cost_minima[best_idx]
+                best_prob = probs[best_idx]
+
+                solutions.append(np.append(best_values, np.array([best_concurrence, best_prob, x, y])))
+
+            return solutions
 
     return solutions
 
@@ -57,7 +65,8 @@ def simulate_rho_xy_phi():
 def simulate_rho_xy():
     solutions = []
     n_guess = 10
-    n_samples = 10000
+    n_samples = 2000
+    n_iter = 2
     x_array = np.zeros(n_samples)
     y_array = np.zeros(n_samples)
     phi = np.random.randn()
@@ -71,57 +80,82 @@ def simulate_rho_xy():
         x_array[i_rand] = x
         y_array[i_rand] = y
 
-    plt.scatter(x_array, y_array)
-    plt.show()
-    ctr = 0
+
+    Q = mp.Queue()
+
     for idx in range(n_samples):
+        print(idx)
         x = x_array[idx]
         y = y_array[idx]
-        ctr = ctr + 1
-        print(ctr)
-        print(phi, x, y, x ** 2 + y ** 2)
+        print(x**2 + y**2)
         rho, x_out, y_out = rho_xy(x, y, phase=phi)
-        best_values, best_error, best_infidelity, best_prob = None, 1., 1., 0.
-        for b in range(n_guess):
-            opt_values, error, infidelity, prob = optimize(rho, m1)
-            if best_values is None or error < best_error:
-                best_values = opt_values
-                best_error = error
-                best_infidelity = infidelity
-                best_prob = prob
 
-        solutions.append(np.append(best_values, np.array([best_error, best_infidelity, best_prob, x, y])))
+        jobs = []
+        for b in range(n_guess):
+            p = mp.Process(target=optimize, args=(rho, m3, n_iter, Q))
+            p.start()
+            jobs.append(p)
+
+        for p in jobs:
+            p.join()
+
+        results = [Q.get() for _ in range(n_guess)]
+        cost_minima = np.array([r[0] for r in results])
+        cost_args = np.array([r[1] for r in results])
+        probs = np.array([r[2] for r in results])
+
+        best_idx = int(np.argmin(np.asarray(cost_minima)))
+        best_values = cost_args[best_idx]
+        best_concurrence = cost_minima[best_idx]
+        print(best_concurrence)
+        best_prob = probs[best_idx]
+
+        solutions.append(np.append(best_values, np.array([best_concurrence, best_prob, x, y])))
 
     return solutions
 
 
 def simulate_rho_c():
     solutions = []
-    n_guess = 10
+    n_guess = 100
     n_samples = 1000
+    n_iter = 1
 
-    c = np.random.uniform(-1, 1, n_samples)
+    c = np.linspace(0.01, 0.5, n_samples)
+    Q = mp.Queue()
 
     ctr = 0
     for idx in range(n_samples):
         ctr = ctr + 1
         rho = rho_zsolt(c[idx])
-        best_values, best_error, best_infidelity, best_prob = None, 1., 1., 0.
+        jobs = []
         for b in range(n_guess):
-            opt_values, error, infidelity, prob = optimize(rho, m1)
-            if best_values is None or error < best_error:
-                best_values = opt_values
-                best_error = error
-                best_infidelity = infidelity
-                best_prob = prob
+            p = mp.Process(target=optimize, args=(rho, m3, n_iter, Q))
+            p.start()
+            jobs.append(p)
 
-        solutions.append(np.append(best_values, np.array([best_error, best_infidelity, best_prob, c[idx]])))
+        for p in jobs:
+            p.join()
+
+        results = [Q.get() for _ in range(n_guess)]
+        cost_minima = np.array([r[0] for r in results])
+        cost_args = np.array([r[1] for r in results])
+        probs = np.array([r[2] for r in results])
+
+        best_idx = int(np.argmin(np.asarray(cost_minima)))
+        best_values = cost_args[best_idx]
+        best_concurrence = cost_minima[best_idx]
+        #print(best_concurrence)
+        best_prob = probs[best_idx]
+
+        solutions.append(np.append(best_values, np.array([best_concurrence, best_prob])))
 
     return solutions
 
 
 if __name__ == "__main__":
     sol_array = np.vstack(simulate_rho_xy())
+    print(sol_array)
     if not os.path.exists("data"):
         os.mkdir("data")
     now = datetime.datetime.now()
