@@ -5,22 +5,20 @@ import datetime
 import matplotlib.pyplot as plt
 
 from scipy.optimize import minimize, basinhopping
-from ent_purification import cost, rho_xy_phi, rho_xy, m1, m2, m3, rho_zsolt
+from ent_purification import cost, rho_xy_phi, rho_xy, m1, m2, m3, m4, rho_zsolt
 import multiprocessing as mp
 
 counter = 0
 
 
-def optimize(rho, c_ops, n_iter, q):
+def optimize(rho, c_ops, n_iter, q, init_values):
     def opt_func(x):
         return cost(rho, x, c_ops, n_iter - 1)[0]
 
-    dim = 4 * n_iter
-    init_values = np.random.randn(dim)
-
+    print(opt_func(init_values))
     res = minimize(opt_func, x0=init_values, method="Nelder-Mead")
     cost_value, prob = cost(rho, res.x, c_ops, n_iter - 1)
-    #print(concurrence)
+    # print(m3(res.x))
 
     q.put([res.fun, res.x, prob])
 
@@ -28,6 +26,7 @@ def optimize(rho, c_ops, n_iter, q):
 def simulate_rho_xy_phi():
     solutions = []
     n_guess = 3
+    n_iter = 2000
     phi_array = np.linspace(0.1, np.pi, 40)
     eta_damp_array = np.linspace(0.1, 0.5, 1)
     n_photon_array = np.linspace(0, 1000, 10)
@@ -66,7 +65,7 @@ def simulate_rho_xy():
     solutions = []
     n_guess = 10
     n_samples = 2000
-    n_iter = 2
+    n_iter = 1
     x_array = np.zeros(n_samples)
     y_array = np.zeros(n_samples)
     phi = np.random.randn()
@@ -80,19 +79,19 @@ def simulate_rho_xy():
         x_array[i_rand] = x
         y_array[i_rand] = y
 
-
     Q = mp.Queue()
 
     for idx in range(n_samples):
-        print(idx)
         x = x_array[idx]
         y = y_array[idx]
-        print(x**2 + y**2)
+        print(idx, x ** 2 + y ** 2)
         rho, x_out, y_out = rho_xy(x, y, phase=phi)
 
         jobs = []
         for b in range(n_guess):
-            p = mp.Process(target=optimize, args=(rho, m3, n_iter, Q))
+            dim = 4 * n_iter
+            init_values = np.random.uniform(0, 1, dim)
+            p = mp.Process(target=optimize, args=(rho, m3, n_iter, Q, init_values))
             p.start()
             jobs.append(p)
 
@@ -117,7 +116,7 @@ def simulate_rho_xy():
 
 def simulate_rho_c():
     solutions = []
-    n_guess = 100
+    n_guess = 50
     n_samples = 1000
     n_iter = 1
 
@@ -130,7 +129,9 @@ def simulate_rho_c():
         rho = rho_zsolt(c[idx])
         jobs = []
         for b in range(n_guess):
-            p = mp.Process(target=optimize, args=(rho, m3, n_iter, Q))
+            dim = 4 * n_iter
+            init_values = 2*np.pi*np.random.uniform(0, 1, dim)
+            p = mp.Process(target=optimize, args=(rho, m3, n_iter, Q, init_values))
             p.start()
             jobs.append(p)
 
@@ -145,7 +146,7 @@ def simulate_rho_c():
         best_idx = int(np.argmin(np.asarray(cost_minima)))
         best_values = cost_args[best_idx]
         best_concurrence = cost_minima[best_idx]
-        #print(best_concurrence)
+        print(best_concurrence)
         best_prob = probs[best_idx]
 
         solutions.append(np.append(best_values, np.array([best_concurrence, best_prob])))
@@ -153,10 +154,14 @@ def simulate_rho_c():
     return solutions
 
 
-if __name__ == "__main__":
+def main():
     sol_array = np.vstack(simulate_rho_xy())
     print(sol_array)
     if not os.path.exists("data"):
         os.mkdir("data")
     now = datetime.datetime.now()
     np.savetxt(os.path.join("data", "ent_purif_xy_solutions" + now.strftime("%m_%d_%Y_%H_%M_%S") + ".txt"), sol_array)
+
+
+if __name__ == "__main__":
+    main()

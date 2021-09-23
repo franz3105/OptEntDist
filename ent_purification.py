@@ -183,12 +183,28 @@ def m2_A1A2(s: np.ndarray) -> qt.Qobj:
     return m
 
 
+def m4_A1A2(s: np.ndarray):
+    Id_4 = qt.tensor([qt.qeye(2)] * 2)
+    m = qt.tensor(Id_4, Id_4)
+    perm = qt.tensor(qt.tensor(qt.qeye(2), S_n(1, 2)), qt.qeye(2))
+    m = perm * m * perm.dag()
+    return m
+
+
+def m4_B1B2(s: np.ndarray) -> qt.Qobj:
+    Id_4 = qt.tensor([qt.qeye(2)] * 2)
+    m = qt.tensor(Id_4, Id_4)
+    perm = qt.tensor(qt.tensor(qt.qeye(2), S_n(1, 2)), qt.qeye(2))
+    m = perm * m * perm.dag()
+    return m
+
+
 def m3_A1A2(s: np.ndarray) -> qt.Qobj:
     m = s[0] * projectors_A1A2[0] + \
         s[1] * projectors_A1A2[1] + \
         s[2] * projectors_A1A2[2] + \
         s[3] * projectors_A1A2[3]
-    return m
+    return m/np.linalg.norm(s)
 
 
 def m3_B1B2(s) -> qt.Qobj:
@@ -196,7 +212,7 @@ def m3_B1B2(s) -> qt.Qobj:
         s[1] * projectors_B1B2[1] + \
         s[2] * projectors_B1B2[2] + \
         s[3] * projectors_B1B2[3]
-    return qt.tensor(m)
+    return qt.tensor(m)/np.linalg.norm(s)
 
 
 def m1_A1A2(s: np.ndarray) -> qt.Qobj:
@@ -221,6 +237,12 @@ def m3(s: np.ndarray) -> qt.Qobj:
     return m_tot
 
 
+def m4(s: np.ndarray) -> qt.Qobj:
+    m_tot = m4_A1A2(s[:4]) * m4_B1B2(s[:4])
+
+    return m_tot
+
+
 def m1(s: np.ndarray) -> qt.Qobj:
     m_tot = m1_A1A2(s[:4]) * m1_B1B2(s[:4])
     # print(m_tot * m_tot.dag())
@@ -229,7 +251,7 @@ def m1(s: np.ndarray) -> qt.Qobj:
 
 
 def m2(s: np.ndarray) -> qt.Qobj:
-    return m2_A1A2(s[:2]) * m2_B1B2(s[2:])
+    return m2_A1A2(s[:2]) * m2_B1B2(s[:2])
 
 
 def werner(F: float):
@@ -238,31 +260,34 @@ def werner(F: float):
 
 
 def cost(rho_start: qt.Qobj, x: np.ndarray, M, n_iter):
-    #assert x.shape[0] % n_iter == 0
+    # assert x.shape[0] % n_iter == 0
     n_op_params = 4  # int((x.shape[0] / n_iter))
 
     # print(rho_start)
+
     rho_init = qt.tensor(rho_start, rho_start)
+    concurrence = qt.concurrence(qt.ptrace(rho_init, [0, 1]))
+    #print(1-concurrence)
     # print(qt.concurrence(qt.ptrace(rho_init, [0, 1])))
     # print(rho_init.eigenenergies())
     # print(qt.concurrence(rho_start))
     p0 = 1
     proj_set = (proj_1, proj_2)
-    p_set = [[1, ] * 2 ** i_lvl for i_lvl in range(n_iter+2)]
-    rho_set = [[None, ] * 2 ** i_lvl for i_lvl in range(n_iter+2)]
+    p_set = [[1, ] * 2 ** i_lvl for i_lvl in range(n_iter + 2)]
+    rho_set = [[None, ] * 2 ** i_lvl for i_lvl in range(n_iter + 2)]
 
     p_set[0][0] = p0
     rho_set[0][0] = rho_init
 
-    for l in range(n_iter+1):
-        #print(l)
-        m = M(x[l * n_op_params:(l+1) * n_op_params])
+    for l in range(n_iter + 1):
+        # print(l)
+        m = M(x[l * n_op_params:(l + 1) * n_op_params])
 
         for i_p, p in enumerate(p_set[l]):
-            #print(i_p)
+            # print(i_p)
 
             for i_proj, proj in enumerate(proj_set):
-                #print(l, i_p)
+                # print(l, i_p)
                 rho_0 = rho_set[l][i_p]
                 rho_1 = m * rho_0 * m.dag() / ((m.dag() * m * rho_0).tr() + 1e-8)
                 assert np.round(rho_1.tr(), 2) == 1.0
@@ -273,17 +298,17 @@ def cost(rho_start: qt.Qobj, x: np.ndarray, M, n_iter):
                 # print(p_1+p_2+p_3+p_4)
                 # print(np.round(np.array([p_1, p_2, p_3, p_4]), 2))
                 # idx=0
-                #print(rho_set)
-                #print(prob)
-                p_set[l+1][2*i_p + i_proj] = prob*p_set[l][i_p]
-                rho_set[l+1][2*i_p + i_proj] = rho_new_ip
-                #print(p_set)
+                # print(rho_set)
+                # print(prob)
+                p_set[l + 1][2 * i_p + i_proj] = prob * p_set[l][i_p]
+                rho_set[l + 1][2 * i_p + i_proj] = rho_new_ip
+                # print(p_set)
 
                 # print(p_set)
                 if prob > 1 or prob < 0:
                     raise ValueError("Probabilities cannot lie outside range [0,1]")
                 # print(rho_1.tr())
-        #print(p_set)
+        # print(p_set)
 
         # rho_tilde_1 = qt.bel        pool = mp.Pool(NUM_CORES)
         #         actions = pool.map(self.single_step, (arg for arg in zip(self.envs, actions)))
@@ -303,12 +328,12 @@ def cost(rho_start: qt.Qobj, x: np.ndarray, M, n_iter):
     rho_new = rho_set[-1][idx]
     p = p_last_lvl[idx]
 
-    #print(rho_new)
+    # print(rho_new)
     concurrence = qt.concurrence(qt.ptrace(rho_new, [0, 1]))
     # fidelity = np.abs(rho_tilde_1[0, 0])
     # print(infidelity)
     cost_value = 1 - concurrence
-    #print(cost_value)
+    # print(cost_value)
     # if cost_value > 1:
     #    print(fidelity)
     #    print(p_1)
