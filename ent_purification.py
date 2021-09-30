@@ -5,6 +5,7 @@
 
 
 import qutip as qt
+from qutip.measurement import measure, measurement_statistics
 from qutip.qip.operations import controlled_gate, cnot, molmer_sorensen
 import numpy as np
 import matplotlib.pyplot as plt
@@ -14,10 +15,25 @@ q_0 = qt.basis(2, 0)
 q_1 = qt.basis(2, 1)
 
 qubit_projectors = [q_0 * q_0.dag(), q_1 * q_1.dag(), q_1 * q_0.dag(), q_0 * q_1.dag()]
+bell_states = [qt.bell_state(state="00"), qt.bell_state(state="01"), qt.bell_state(state="10"),
+               qt.bell_state(state="11")]
+proj = []
+for b_i in bell_states:
+    for b_j in bell_states:
+        proj.append(0.5 * b_i * b_j.dag())
+
+# print(proj)
+s = qt.tensor(qt.qzero(2), qt.qzero(2))
+print(len(proj))
+for p in proj:
+    s += p
+
+print(s)
 pr00 = qt.bell_state(state="00") * qt.bell_state(state="00").dag()
 pr01 = qt.bell_state(state="01") * qt.bell_state(state="01").dag()
 pr10 = qt.bell_state(state="10") * qt.bell_state(state="10").dag()
 pr11 = qt.bell_state(state="11") * qt.bell_state(state="11").dag()
+print(pr00 + pr01 + pr10 + pr11)
 Id_2 = qt.tensor([qt.qeye(2)] * 2)
 
 proj_1 = qt.tensor(Id_2, qt.tensor(q_0, q_0) * qt.tensor(q_0, q_0).dag())
@@ -25,11 +41,18 @@ proj_2 = qt.tensor(Id_2, qt.tensor(q_1, q_0) * qt.tensor(q_1, q_0).dag())
 proj_3 = qt.tensor(Id_2, qt.tensor(q_0, q_1) * qt.tensor(q_0, q_1).dag())
 proj_4 = qt.tensor(Id_2, qt.tensor(q_1, q_1) * qt.tensor(q_1, q_1).dag())
 
-print(proj_1 + proj_2 + proj_3 + proj_4)
-print(qt.bell_state(state="00"))
-print(qt.bell_state(state="01"))
-print(qt.bell_state(state="10"))
-print(qt.bell_state(state="11"))
+clifford_set = [qt.identity(2), qt.sigmax(), qt.sigmay(), qt.sigmaz()]
+generators = []
+for sigma_1 in clifford_set:
+    for sigma_2 in clifford_set:
+        generators.append(qt.tensor(sigma_2, sigma_1))
+
+del (generators[0])
+# print(proj_1 + proj_2 + proj_3 + proj_4)
+# print(qt.bell_state(state="00"))
+# print(qt.bell_state(state="01"))
+# print(qt.bell_state(state="10"))
+# print(qt.bell_state(state="11"))
 
 # print(pr11 * pr11.dag())# + pr11 * pr11.dag() + pr01 * pr01.dag() + pr10 * pr10.dag())
 p_length = 100
@@ -44,7 +67,7 @@ def S_n(i=0, j=1):
     return qt.Qobj(s, dims=[[2, ] * 2, [2, ] * 2])
 
 
-print(S_n(i=1, j=2))
+# print(S_n(i=1, j=2))
 
 
 def bell_projectors_B1B2():
@@ -67,7 +90,7 @@ def bell_projectors_B1B2():
                    qt.tensor(qt.qeye(2), q_1 * q_1.dag(), qt.qeye(2), q_1 * q_1.dag()) -
                    qt.tensor(qt.qeye(2), q_0 * q_1.dag(), qt.qeye(2), q_0 * q_1.dag()) -
                    qt.tensor(qt.qeye(2), q_1 * q_0.dag(), qt.qeye(2), q_1 * q_0.dag()))
-    print(proj_1 + proj_2 + proj_3 + proj_4)
+    # print(proj_1 + proj_2 + proj_3 + proj_4)
     return proj1, proj2, proj3, proj4
 
 
@@ -92,7 +115,7 @@ def bell_projectors_A1A2():
                    qt.tensor(q_0 * q_1.dag(), qt.qeye(2), q_0 * q_1.dag(), qt.qeye(2)) -
                    qt.tensor(q_1 * q_0.dag(), qt.qeye(2), q_1 * q_0.dag(), qt.qeye(2)))
 
-    print(proj_1 + proj_2 + proj_3 + proj_4)
+    # print(proj_1 + proj_2 + proj_3 + proj_4)
     return proj1, proj2, proj3, proj4
 
 
@@ -156,7 +179,7 @@ def MS(num_qubits, theta, phi):
     qubit_list_y = [qt.qeye(2)] * num_qubits
     for i in range(num_qubits):
         qubit_list_x[i] = qt.sigmax()
-        qubit_list_y[i] = qt.sigmax()
+        qubit_list_y[i] = qt.sigmay()
         Sx += qt.tensor(qubit_list_x)
         Sy += qt.tensor(qubit_list_y)
         qubit_list_x = [qt.qeye(2)] * num_qubits
@@ -167,9 +190,33 @@ def MS(num_qubits, theta, phi):
     return out
 
 
+def proj_U(s: np.ndarray):
+    u = np.exp(1j * s[0]) * pr00 + np.exp(1j * s[1]) * pr01 + np.exp(1j * s[2]) * pr10 + np.exp(1j * s[3]) * pr11
+    # print(u)
+    # print(u.shape)
+
+    return u
+
+
+def general_U(s: np.ndarray):
+    o = qt.tensor([qt.qzero(2)] * 2)
+    for i in range(s.shape[0]):
+        o += 1j*s[i] * generators[i]
+
+    return o.expm()
+
+
+def Zloc(num_qubits, theta, i):
+    out = - 1.j * theta * qt.sigmaz() / 2
+    qubit_list = [qt.qeye(2)] * num_qubits
+    qubit_list[i] = out.expm()
+    out = qt.tensor(qubit_list)
+    return out
+
+
 def m2_B1B2(s: np.ndarray) -> qt.Qobj:
     Id_4 = qt.tensor([qt.qeye(2)] * 2)
-    m = qt.tensor(Id_4, MS(2, s[0], s[1]))
+    m = qt.tensor(Id_4, Zloc(2, s[3], 1) * MS(2, s[0], s[1]) * Zloc(2, s[2], 1))
     perm = qt.tensor(qt.tensor(qt.qeye(2), S_n(1, 2)), qt.qeye(2))
     m = perm * m * perm.dag()
     return m
@@ -177,7 +224,7 @@ def m2_B1B2(s: np.ndarray) -> qt.Qobj:
 
 def m2_A1A2(s: np.ndarray) -> qt.Qobj:
     Id_4 = qt.tensor([qt.qeye(2)] * 2)
-    m = qt.tensor(MS(2, s[0], s[1]), Id_4)
+    m = qt.tensor(Zloc(2, s[3], 1) * MS(2, s[0], s[1]) * Zloc(2, s[2], 1), Id_4)
     perm = qt.tensor(qt.tensor(qt.qeye(2), S_n(1, 2)), qt.qeye(2))
     m = perm * m * perm.dag()
     return m
@@ -185,7 +232,7 @@ def m2_A1A2(s: np.ndarray) -> qt.Qobj:
 
 def m4_A1A2(s: np.ndarray):
     Id_4 = qt.tensor([qt.qeye(2)] * 2)
-    m = qt.tensor(Id_4, Id_4)
+    m = qt.tensor(Id_4, qt.cnot())
     perm = qt.tensor(qt.tensor(qt.qeye(2), S_n(1, 2)), qt.qeye(2))
     m = perm * m * perm.dag()
     return m
@@ -193,7 +240,7 @@ def m4_A1A2(s: np.ndarray):
 
 def m4_B1B2(s: np.ndarray) -> qt.Qobj:
     Id_4 = qt.tensor([qt.qeye(2)] * 2)
-    m = qt.tensor(Id_4, Id_4)
+    m = qt.tensor(qt.cnot(), Id_4)
     perm = qt.tensor(qt.tensor(qt.qeye(2), S_n(1, 2)), qt.qeye(2))
     m = perm * m * perm.dag()
     return m
@@ -204,7 +251,8 @@ def m3_A1A2(s: np.ndarray) -> qt.Qobj:
         s[1] * projectors_A1A2[1] + \
         s[2] * projectors_A1A2[2] + \
         s[3] * projectors_A1A2[3]
-    return m/np.linalg.norm(s)
+
+    return m / np.linalg.norm(s)
 
 
 def m3_B1B2(s) -> qt.Qobj:
@@ -212,22 +260,23 @@ def m3_B1B2(s) -> qt.Qobj:
         s[1] * projectors_B1B2[1] + \
         s[2] * projectors_B1B2[2] + \
         s[3] * projectors_B1B2[3]
-    return qt.tensor(m)/np.linalg.norm(s)
+
+    return qt.tensor(m) / np.linalg.norm(s)
 
 
 def m1_A1A2(s: np.ndarray) -> qt.Qobj:
-    m = np.exp(1j * s[0]) * projectors_A1A2[0] + \
-        np.exp(1j * s[1]) * projectors_A1A2[1] + \
-        np.exp(1j * s[2]) * projectors_A1A2[2] + \
-        np.exp(1j * s[3]) * projectors_A1A2[3]
+    Id_4 = qt.tensor([qt.qeye(2)] * 2)
+    m = qt.tensor(Id_4, general_U(s))
+    perm = qt.tensor(qt.tensor(qt.qeye(2), S_n(1, 2)), qt.qeye(2))
+    m = perm * m * perm.dag()
     return qt.tensor(m)
 
 
 def m1_B1B2(s) -> qt.Qobj:
-    m = np.exp(1j * s[0]) * projectors_B1B2[0] + \
-        np.exp(1j * s[1]) * projectors_B1B2[1] + \
-        np.exp(1j * s[2]) * projectors_B1B2[2] + \
-        np.exp(1j * s[3]) * projectors_B1B2[3]
+    Id_4 = qt.tensor([qt.qeye(2)] * 2)
+    m = qt.tensor(general_U(s), Id_4)
+    perm = qt.tensor(qt.tensor(qt.qeye(2), S_n(1, 2)), qt.qeye(2))
+    m = perm * m * perm.dag()
     return qt.tensor(m)
 
 
@@ -244,14 +293,14 @@ def m4(s: np.ndarray) -> qt.Qobj:
 
 
 def m1(s: np.ndarray) -> qt.Qobj:
-    m_tot = m1_A1A2(s[:4]) * m1_B1B2(s[:4])
+    m_tot = m1_A1A2(s[:15]) * m1_B1B2(s[:15])
     # print(m_tot * m_tot.dag())
     #    m1_A1A2(s[:4]) * m1_B1B2(s[4:]) - m1_A1A2(s[:4]) * m1_B1B2(s[4:])) == 0
     return m_tot
 
 
 def m2(s: np.ndarray) -> qt.Qobj:
-    return m2_A1A2(s[:2]) * m2_B1B2(s[:2])
+    return m2_A1A2(s[:4]) * m2_B1B2(s[:4])
 
 
 def werner(F: float):
@@ -260,85 +309,75 @@ def werner(F: float):
 
 
 def cost(rho_start: qt.Qobj, x: np.ndarray, M, n_iter):
+    # print(x)
     # assert x.shape[0] % n_iter == 0
-    n_op_params = 4  # int((x.shape[0] / n_iter))
+    n_op_params = 15  # int((x.shape[0] / n_iter))
 
     # print(rho_start)
+    rho_state = rho_start
+    c_init = qt.concurrence(rho_state)
 
-    rho_init = qt.tensor(rho_start, rho_start)
-    concurrence = qt.concurrence(qt.ptrace(rho_init, [0, 1]))
-    #print(1-concurrence)
-    # print(qt.concurrence(qt.ptrace(rho_init, [0, 1])))
-    # print(rho_init.eigenenergies())
-    # print(qt.concurrence(rho_start))
     p0 = 1
-    proj_set = (proj_1, proj_2)
-    p_set = [[1, ] * 2 ** i_lvl for i_lvl in range(n_iter + 2)]
-    rho_set = [[None, ] * 2 ** i_lvl for i_lvl in range(n_iter + 2)]
+    proj_set = (proj_1, proj_2, proj_3, proj_4)
+    p_set = [1] * (n_iter + 2)
+    rho_set = [None] * (n_iter + 2)
 
-    p_set[0][0] = p0
-    rho_set[0][0] = rho_init
+    p_set[0] = p0
+    rho_set[0] = rho_state
+    # print(rho_set)
 
     for l in range(n_iter + 1):
         # print(l)
-        m = M(x[l * n_op_params:(l + 1) * n_op_params])
+        u = x[:n_op_params]  # + 1j * x[n_op_params:2 * n_op_params]
+        # for i in range(n_op_params):
+        #    u[i] = u[i] / np.abs(u[i])
+        # print(u[0]*u[0].conjugate())
+        # u = 4*u / np.linalg.norm(u)
+        # print(u)
+        m = M(u[: n_op_params])
+        # print(m * m.dag())
+        # print(u)
+        #print(m)
+        # print(x[l * n_op_params:(l + 1) * n_op_params])
+        # print(i_p)
+        rho_0 = qt.tensor(rho_set[l], rho_set[l])
+        rho_1 = m * rho_0 * m.dag() / ((m.dag() * m * rho_0).tr() + 1e-8)
+        # print((rho_1 - rho_0).full().round(2))
+        c_set = []
+        rho_set = []
+        prob_set = []
 
-        for i_p, p in enumerate(p_set[l]):
-            # print(i_p)
+        for i_proj, proj in enumerate(proj_set):
+            # print(l, i_p)
+            prob = (proj * proj.dag() * rho_1).tr()
+            rho_new_ip = proj * rho_1 * proj.dag() / ((proj * proj.dag() * rho_1).tr() + 1e-8)
+            rho_new_ip_tilde = qt.ptrace(rho_new_ip, [0, 1])
+            # Check concurrence
 
-            for i_proj, proj in enumerate(proj_set):
-                # print(l, i_p)
-                rho_0 = rho_set[l][i_p]
-                rho_1 = m * rho_0 * m.dag() / ((m.dag() * m * rho_0).tr() + 1e-8)
-                assert np.round(rho_1.tr(), 2) == 1.0
-                prob = (proj * proj.dag() * rho_1).tr()
-                rho_new_ip = proj * rho_1 * proj.dag() / ((proj * proj.dag() * rho_1).tr() + 1e-8)
+            c = qt.concurrence(rho_new_ip_tilde)
+            c_set.append(c)
+            rho_set.append(rho_new_ip_tilde)
+            prob_set.append(prob)
 
-                # print(p_1)
-                # print(p_1+p_2+p_3+p_4)
-                # print(np.round(np.array([p_1, p_2, p_3, p_4]), 2))
-                # idx=0
-                # print(rho_set)
-                # print(prob)
-                p_set[l + 1][2 * i_p + i_proj] = prob * p_set[l][i_p]
-                rho_set[l + 1][2 * i_p + i_proj] = rho_new_ip
-                # print(p_set)
+        c_set = np.array(c_set)
+        idx = np.argmax(c_set)
+        p_set[l + 1] = prob_set[idx]
+        rho_set[l + 1] = rho_set[idx]
 
-                # print(p_set)
-                if prob > 1 or prob < 0:
-                    raise ValueError("Probabilities cannot lie outside range [0,1]")
-                # print(rho_1.tr())
-        # print(p_set)
+    p_last_lvl = p_set[-1]
+    rho_last_lvl = rho_set[-1]
+    # idx = np.argmax(p_last_lvl)
+    # rho_new = rho_last_lvl[idx]
+    # p = p_last_lvl[idx]
 
-        # rho_tilde_1 = qt.bel        pool = mp.Pool(NUM_CORES)
-        #         actions = pool.map(self.single_step, (arg for arg in zip(self.envs, actions)))
-        #         pool.close()
-        #         pool.join()l_state(state="11").dag() * qt.ptrace(rho_new, [0, 1]) * qt.bell_state(state="11")
-        # if np.round(1 - rho_tilde_1[0, 0] * p_1, 2) == 0:
-        # if np.round(np.abs(3/2. - rho_tilde_1[0, 0] - p_1),2) == 0.0:
-        #    print(p_1)
-        #    print(p_2)
-        #    print(rho_tilde_1[0,0])
-        # if np.round(np.abs(1 - rho_tilde_1[0, 0]), 2) == 0:
-        # print(f"Fidelity: {np.abs(rho_tilde_1[0, 0])}")
-        # print(f"Probabiltiy {p_1}")
+    c_set = []
+    cost_value = 1 - qt.concurrence(rho_last_lvl)
+    # print(rho_start.eigenenergies())
+    # print(rho_last_lvl.eigenenergies())
+    # print(c_init)
+    # print(qt.concurrence(rho_last_lvl))
 
-    p_last_lvl = np.array(p_set[-1])
-    idx = np.argmax(p_last_lvl) - 1
-    rho_new = rho_set[-1][idx]
-    p = p_last_lvl[idx]
-
-    # print(rho_new)
-    concurrence = qt.concurrence(qt.ptrace(rho_new, [0, 1]))
-    # fidelity = np.abs(rho_tilde_1[0, 0])
-    # print(infidelity)
-    cost_value = 1 - concurrence
-    # print(cost_value)
-    # if cost_value > 1:
-    #    print(fidelity)
-    #    print(p_1)
-
-    return cost_value, p
+    return cost_value, p_last_lvl, rho_last_lvl
 
 
 def probability(rho_start: qt.Qobj, M, c: np.ndarray):

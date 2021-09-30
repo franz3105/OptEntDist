@@ -5,10 +5,29 @@ import numpy as np
 import os
 from ent_purification import m1
 
-fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
+#fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
 
-file = os.path.join("data", "ent_purif_xy_solutions06_16_2021_13_13_19.txt")
-data = np.loadtxt(file)
+file1 = os.path.join("data/", "ent_purif_xy_solutions09_24_2021_15_32_44.txt")
+file2 = os.path.join("data/" "ent_purif_xy_solutions09_24_2021_15_34_11.txt")
+file3 = os.path.join("data/", "ent_purif_xy_solutions09_24_2021_15_35_49.txt")
+file4 = os.path.join("data/", "ent_purif_xy_solutions09_24_2021_15_37_30.txt")
+names = ["M1", "CNOT", "MS", "M3"]
+
+for i_f, f in enumerate([file1, file2, file3, file4]):
+    data = np.loadtxt(f)
+    plt.plot(np.linspace(0.5, 1, 100), data[:, 4], label=names[i_f])
+
+plt.legend()
+plt.ylabel("Infidelity after 1 iteration")
+plt.xlabel("F")
+plt.show()
+
+plt.plot(np.linspace(0.01,0.5, 100), data[:, 4])
+plt.ylabel(r"1 - $C(\rho)$ after 1 iteration")
+plt.yscale("log")
+plt.xlabel(r"$c$")
+plt.show()
+print(data.shape)
 x = data[:, 7]
 y = data[:, 8]
 z = data[:, 6]
