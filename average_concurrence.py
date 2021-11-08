@@ -150,8 +150,9 @@ def double_Integral(xmin, xmax, ymin, ymax, nx, ny, A):
 
 
 @jit
-def f(x, y):
-    return 1
+def f(x, y, sigma=0.2):
+    return (jnp.sqrt(x**2+y**2)/sigma**2)*jnp.exp(-(x**2+y**2)/(2*sigma**2))
+    # return 1 if one wants the uniform distribution
 
 
 @partial(jit, static_argnums=(0,))
@@ -173,19 +174,9 @@ def av_inconcurrence(n, a: jnp.ndarray, x, y):
     N = jax.vmap(f)(x, y).reshape(n, n)
 
     norm_c = double_Integral(0, 1, 0, 2 * jnp.pi, n, n, N)
-    # print(norm_c)
+    print(norm_c)
 
     return double_Integral(0, 1, 0, 2 * jnp.pi, n, n, A) / norm_c
-
-
-@partial(jit, static_argnums=(0,))
-def av_est_concurrence(n, a: jnp.ndarray):
-    c = 0
-    for i in range(n):
-        for j in range(n):
-            c += f(x, y) * (1 - purification(rho, a))
-
-    return c
 
 
 def main():
@@ -202,13 +193,14 @@ def main():
     x_array = np.zeros(n ** 2)
     y_array = np.zeros(n ** 2)
 
-    for i_rand in range(n ** 2):
-        t = 2 * np.pi * np.random.random()
-        u = np.random.random() + np.random.random()
-        r = 2 - u if u > 1 else u
-        x, y = r * np.cos(t), r * np.sin(t)
-        x_array[i_rand] = x
-        y_array[i_rand] = y
+    t = np.linspace(0, 2 * np.pi, n)
+    r = np.linspace(0, 0.99, n)
+
+    for i_r in range(n):
+        for j_t in range(n):
+            x, y = r[i_r] * np.cos(t[j_t]), r[i_r] * np.sin(t[j_t])
+            x_array[n*i_r + j_t] = x
+            y_array[n*i_r + j_t] = y
 
     # print((x ** 2 + y ** 2).all() == (jnp.outer(r, r).flatten()).all())
     print(np.mean(x_array ** 2 + y_array ** 2))
