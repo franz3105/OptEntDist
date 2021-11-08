@@ -5,44 +5,31 @@ import numpy as np
 import os
 from ent_purification import m1
 
-#fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
 
-file1 = os.path.join("data/", "ent_purif_xy_solutions09_24_2021_15_32_44.txt")
-file2 = os.path.join("data/" "ent_purif_xy_solutions09_24_2021_15_34_11.txt")
-file3 = os.path.join("data/", "ent_purif_xy_solutions09_24_2021_15_35_49.txt")
-file4 = os.path.join("data/", "ent_purif_xy_solutions09_24_2021_15_37_30.txt")
-names = ["M1", "CNOT", "MS", "M3"]
+file1 = os.path.join("data/", "ent_purif_xy_solutions10_01_2021_08_20_47.txt")
+file2 = os.path.join("data/" "ent_purif_xy_solutions10_01_2021_07_12_33.txt")
+file3 = os.path.join("data/", "ent_purif_xy_solutions10_01_2021_02_10_54.txt")
+names = ["general U", "Z * MS * Z", "CNOT"]
 
-for i_f, f in enumerate([file1, file2, file3, file4]):
+for i_f, f in enumerate([file1, file2, file3]):
     data = np.loadtxt(f)
-    plt.plot(np.linspace(0.5, 1, 100), data[:, 4], label=names[i_f])
+    fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
 
-plt.legend()
-plt.ylabel("Infidelity after 1 iteration")
-plt.xlabel("F")
-plt.show()
+    x = data[:, -2]
+    y = data[:,-1]
+    z = data[:, -4]
+    plt.title(f"Gate {names[i_f]}")
+    ax.plot_trisurf(x, y, z, cmap=cm.coolwarm,
+                    linewidth=0, antialiased=False, label=names[i_f])
+    # ax_2 = fig.add_subplot(110, projection='3d')
+    # ax_2.scatter(data[:, 5], data[:, 7], np.round(data[:, 8], 3))
+    ax.set_xlabel('X axis')
+    ax.set_ylabel('Y axis')
+    ax.set_zlabel(r'C(x,y)')
+    plt.show()
 
-plt.plot(np.linspace(0.01,0.5, 100), data[:, 4])
-plt.ylabel(r"1 - $C(\rho)$ after 1 iteration")
-plt.yscale("log")
-plt.xlabel(r"$c$")
-plt.show()
-print(data.shape)
-x = data[:, 7]
-y = data[:, 8]
-z = data[:, 6]
-print(x.shape)
-print(y.shape)
-print(z.shape)
-# x,y = np.meshgrid(x,y)
-ax.plot_trisurf(x, y, z, cmap=cm.coolwarm,
-                linewidth=0, antialiased=False)
-# ax_2 = fig.add_subplot(110, projection='3d')
-# ax_2.scatter(data[:, 5], data[:, 7], np.round(data[:, 8], 3))
-ax.set_xlabel('X axis')
-ax.set_ylabel('Y axis')
-ax.set_zlabel(r'1 - p')
-plt.show()
+
+
 
 for s in data[:, :8]:
     print(s)

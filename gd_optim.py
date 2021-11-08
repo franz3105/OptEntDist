@@ -5,63 +5,27 @@ import datetime
 import matplotlib.pyplot as plt
 import qutip as qt
 
-from scipy.optimize import minimize, basinhopping
-from ent_purification import cost, rho_xy_phi, rho_xy, m1, m2, m3, m4, rho_zsolt, pr01, werner
+from scipy.optimize import minimize
+from ent_purification import cost, m1
+from qutip_wrapper import rho_xy, rho_xy_phi, rho_zsolt, werner, pr01
 import multiprocessing as mp
+import jax.numpy as jnp
+from jax import grad, jit
+from jax_minimize_wrapper import minimize
 
 counter = 0
 
 
-def optimize(rho, c_ops, n_iter, q, init_values):
+def optimize(rho, n_iter, init_values):
+    # print(rho)
+
     def opt_func(x):
-        return cost(rho, x, c_ops, n_iter - 1)[0]
+        return cost(rho, x, n_iter - 1)[0]
 
-    # print(opt_func(init_values))
-    res = minimize(opt_func, x0=init_values, method="Nelder-Mead")
-    cost_value, prob, *_ = cost(rho, res.x, c_ops, n_iter - 1)
-    # print(res.x)
-    # print(f"Probability: {prob}")
-    # print(m3(res.x))
+    res = minimize(opt_func, x0=init_values, method="bfgs")
+    cost_value, prob, *_ = cost(rho, res.x, n_iter - 1)
 
-    q.put([res.fun, res.x, prob])
-
-
-def simulate_rho_xy_phi():
-    solutions = []
-    n_guess = 3
-    n_iter = 2000
-    phi_array = np.linspace(0.1, np.pi, 40)
-    eta_damp_array = np.linspace(0.1, 0.5, 1)
-    n_photon_array = np.linspace(0, 1000, 10)
-    Q = mp.Queue()
-    for phi in phi_array:
-        for eta in eta_damp_array:
-            for n in n_photon_array:
-                rho, x, y = rho_xy_phi(eta, phi, n)
-                jobs = []
-                for b in range(n_guess):
-                    p = mp.Process(target=optimize, args=(rho, m1, n_iter, Q))
-                    p.start()
-                    jobs.append(p)
-
-                for p in jobs:
-                    p.join()
-
-                results = [Q.get() for _ in range(n_guess)]
-                cost_minima = np.array([r[0] for r in results])
-                cost_args = np.array([r[1] for r in results])
-                probs = np.array([r[2] for r in results])
-
-                best_idx = int(np.argmin(np.asarray(cost_minima)))
-                best_values = cost_args[best_idx]
-                best_concurrence = cost_minima[best_idx]
-                best_prob = probs[best_idx]
-
-                solutions.append(np.append(best_values, np.array([best_concurrence, best_prob, x, y])))
-
-            return solutions
-
-    return solutions
+    return [res.fun, res.x, prob]
 
 
 def simulate_rho_xy():
@@ -82,34 +46,24 @@ def simulate_rho_xy():
         x_array[i_rand] = x
         y_array[i_rand] = y
 
-    Q = mp.Queue()
+    cost_minima = []
+    cost_args = []
+    probs = []
 
     for idx in range(n_samples):
         x = x_array[idx]
         y = y_array[idx]
         print(idx, x ** 2 + y ** 2)
         rho, x_out, y_out = rho_xy(x, y, phase=phi)
-        # print(np.linalg.eigvals(rho.full()))
 
-        jobs = []
-        measurement = pr01 * rho * pr01.dag()
-        # print(measurement[0,0])
-        # print(c)
         print(qt.concurrence(rho))
-        for b in range(n_guess):
-            dim = 4 * n_iter * 2
-            init_values = np.random.randn(dim)
-            p = mp.Process(target=optimize, args=(rho, m1, n_iter, Q, init_values))
-            p.start()
-            jobs.append(p)
+        dim = 15 * n_iter
+        init_values = np.random.randn(dim)
+        res = optimize(jnp.array(rho.full(), dtype=np.complex128), n_iter, init_values)
 
-        for p in jobs:
-            p.join()
-
-        results = [Q.get() for _ in range(n_guess)]
-        cost_minima = np.array([r[0] for r in results])
-        cost_args = np.array([r[1] for r in results])
-        probs = np.array([r[2] for r in results])
+        cost_minima.append(res[0])
+        cost_args.append(res[1])
+        probs.append(res[2])
 
         best_idx = int(np.argmin(cost_minima))
         best_values = cost_args[best_idx]
@@ -136,7 +90,7 @@ def simulate_werner():
     ctr = 0
     for idx in range(n_samples):
         ctr = ctr + 1
-        rho = werner(c[idx])
+        rho = werner(c[idx]).full()
         jobs = []
         print(1 - qt.concurrence(rho))
         for b in range(n_guess):
@@ -184,7 +138,7 @@ def simulate_rho_c():
         for b in range(n_guess):
             dim = 4 * n_iter
             init_values = 2 * np.pi * np.random.uniform(0, 1, dim)
-            p = mp.Process(target=optimize, args=(rho, m2, n_iter, Q, init_values))
+            p = mp.Process(target=optimize, args=(rho, m1, n_iter, Q, init_values))
             p.start()
             jobs.append(p)
 
