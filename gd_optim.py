@@ -7,7 +7,7 @@ import qutip as qt
 
 from scipy.optimize import minimize
 from ent_purification import cost, m1
-from qutip_wrapper import rho_xy, rho_xy_phi, rho_zsolt, werner, pr01
+from qutip_wrapper import rho_zsolt, werner
 import multiprocessing as mp
 import jax.numpy as jnp
 from jax import grad, jit

@@ -14,7 +14,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import random
 from jax.ops import index, index_update
-from jax import jit, partial
+from jax import jit
 from qutip_wrapper import rho_xy
 
 jax.config.update('jax_enable_x64', True)
@@ -151,8 +151,8 @@ def cost(rho_start: np.ndarray, x: np.ndarray, n_iter):
     p_set = jnp.array([1] * (n_iter + 2))
     rho_set = jnp.array([jnp.zeros_like(rho_state)] * (n_iter + 2), dtype=jnp.complex128)
 
-    p_set = index_update(p_set, index[0], p0)
-    rho_set = index_update(rho_set, index[0], rho_state)
+    p_set.at[0].set(p0)
+    rho_set.at[0].set(rho_state)
     # print(rho_set)
 
     for l in range(n_iter + 1):
@@ -179,10 +179,11 @@ def cost(rho_start: np.ndarray, x: np.ndarray, n_iter):
             rho_set.append(rho_new_ip_tilde)
             prob_set.append(jnp.real(prob))
 
+        rho_set = jnp.array(rho_set)
         c_set = jnp.array(c_set)
         idx = jnp.argmax(c_set)
-        p_set = index_update(p_set, index[l + 1], jnp.asarray(prob_set)[idx])
-        rho_set = index_update(rho_set, index[l + 1], jnp.asarray(rho_set, dtype=jnp.complex128)[idx])
+        p_set.at[l + 1].set(jnp.asarray(prob_set)[idx])
+        rho_set.at[l + 1].set(jnp.asarray(rho_set, dtype=jnp.complex128)[idx])
 
     p_last_lvl = p_set[-1]
     rho_last_lvl = rho_set[-1]
