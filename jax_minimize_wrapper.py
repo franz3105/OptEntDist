@@ -2,6 +2,7 @@
 A collection of helper functions for optimization with JAX.
 Copyright https://gist.github.com/slinderman/24552af1bdbb6cb033bfea9b2dc4ecfd
 """
+import jax
 import numpy as onp
 import scipy.optimize
 from jax import grad, jit
@@ -9,6 +10,7 @@ from jax.tree_util import tree_flatten, tree_unflatten
 from jax.flatten_util import ravel_pytree
 from itertools import count
 
+jax.config.update('jax_enable_x64', True)
 
 def minimize(fun, x0,
              method=None,

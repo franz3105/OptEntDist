@@ -12,7 +12,9 @@ import math
 import jax.numpy as jnp
 import jax
 import qutip as qt
+import jax.scipy as jsp
 
+from cycler import cycler
 from jax.scipy.linalg import expm
 from scipy.optimize import minimize
 from jax.ops import index, index_update
@@ -21,7 +23,9 @@ from functools import partial
 from qutip_wrapper import werner, rho_zsolt
 from jax_minimize_wrapper import minimize
 
+jax.config.update('jax_platform_name', 'cpu')
 jax.config.update('jax_enable_x64', True)
+jax.config.update("jax_debug_nans", True)
 
 # import qutip as qt
 # from numpy import random
@@ -37,6 +41,17 @@ Z = jnp.array([[1, 0], [0, -1]], dtype=jnp.complex128)
 
 Id2 = jnp.array([[1, 0], [0, 1]], dtype=jnp.complex128)
 
+g2 = jnp.array([[0, -1j, 0, 0], [1j, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], dtype=jnp.complex128)
+g3 = jnp.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], dtype=jnp.complex128)
+g5 = jnp.array([[0, 0, -1j, 0], [0, 0, 0, 0], [1j, 0, 0, 0], [0, 0, 0, 0]], dtype=jnp.complex128)
+g8 = (1 / jnp.sqrt(3)) * jnp.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, -2, 0, 0], [0, 0, 0, 0]], dtype=jnp.complex128)
+g10 = jnp.array([[0, 0, 0, -1j], [0, 0, 0, 0], [0, 0, 0, 0], [1j, 0, 0, 0]], dtype=jnp.complex128)
+g15 = (1 / jnp.sqrt(6)) * jnp.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, -3]], dtype=jnp.complex128)
+
+gell_man_generators = (g2, g3, g5, g8, g10, g15)
+gen_seq = [g3, g2, g3, g5, g3, g10, g3, g2, g3, g5, g3, g2, g3, g8, g15]
+hp_rect = np.pi * np.array(
+    [1, 1 / 2, 1, 1 / 2, 1, 1 / 2, 1, 1 / 2, 1, 1 / 2, 1, 1 / 2, 1, 1 / np.sqrt(3), 1 / np.sqrt(6)])
 CNOT = jnp.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0]], dtype=jnp.complex128)
 
 
@@ -57,9 +72,10 @@ generators = get_generators()
 
 def concurrence(rho: np.ndarray):
     YY = jnp.kron(Y, Y)
-    rho_tilde = (YY.dot(rho.T)).dot(YY)
-    eigs = -jnp.sort(-jnp.linalg.eigvals(rho.dot(rho_tilde)))
-    comp_arr = jnp.array([0., jnp.sqrt(eigs[0]) - jnp.sum(jnp.sqrt(eigs[1:]))])
+    rho_tilde = (rho.dot(YY)).dot(rho.conj().dot(YY))
+    # print(rho)
+    eigs = -jnp.sort(-jnp.linalg.eigvals(rho_tilde))
+    comp_arr = jnp.array([0., jnp.sqrt(eigs[0]) - jnp.sqrt(eigs[1]) - jnp.sqrt(eigs[2]) - jnp.sqrt(eigs[3])])
 
     return jnp.max(jnp.real(comp_arr))
 
@@ -83,31 +99,43 @@ def tensor(qubit_list):
     return s
 
 
-def general_U(s: np.ndarray):
-    o = tensor([jnp.zeros((2, 2))] * 2)
-    for i in range(s.shape[0]):
-        o += s[i] * generators[i]
+def general_U(a: np.ndarray):
+    # print(s)
+    o = tensor([jnp.zeros((2, 2), dtype=jnp.complex128)] * 2)
+    for i in range(a.shape[0]):
+        o += a[i] * generators[i]
+
+    return o
+
+
+def gell_man_U(a: np.ndarray):
+    o = tensor([jnp.zeros((2, 2), dtype=jnp.complex128)] * 2)
+
+    for i in range(a.shape[0]):
+        o = jsp.linalg.expm(1j * a[i] * gen_seq[i]).dot(o)
 
     return o
 
 
 def apply_entangling_gate(rho: np.ndarray, gate: np.ndarray):
     # if a is not 3D vector, then this has to be changed
-    G = gate
+    G = expm(-1j * gate)
+    Gc = expm(1j * gate)
 
+    # print(G)
     rho_f = jnp.kron(rho, rho)
     U = jnp.array([[1, 0, 0, 0], [0, 0, 1, 0], [0, 1, 0, 0], [0, 0, 0, 1]], dtype=jnp.complex128)
     UU = jnp.kron(jnp.kron(Id2, U), Id2)
 
     # side A
-    MA = jnp.kron(expm(-1j * G), Id4)
-    MAc = jnp.kron(expm(1j * G), Id4)
+    MA = jnp.kron(G, Id4)
+    MAc = jnp.kron(Gc, Id4)
     UA = (UU.dot(MA)).dot(UU)
     UAc = (UU.dot(MAc)).dot(UU)
 
     # side B
-    MB = jnp.kron(Id4, expm(-1j * G))
-    MBc = jnp.kron(Id4, expm(1j * G))
+    MB = jnp.kron(Id4, G)
+    MBc = jnp.kron(Id4, Gc)
     UB = (UU.dot(MB)).dot(UU)
     UBc = (UU.dot(MBc)).dot(UU)
 
@@ -127,8 +155,10 @@ def purification(rho: np.ndarray, gate: np.ndarray):
     for i_p, p in enumerate(proj_list):
         proj = jnp.kron(Id4, p)
         rho_new = (proj.dot(rho_t)).dot(proj)
-        prob = rho_new.trace()
-        rho_new = rho_new / (rho_new.trace() + 1e-8)
+        prob = (rho_new.trace() + 1e-6)
+        # print(rho_new)
+        # print(rho_new.trace())
+        rho_new = rho_new / (rho_new.trace() + 1e-6)
         rf = partial_trace(rho_new)
         c_arr = index_update(c_arr, index[i_p], concurrence(rf))
         p_arr = index_update(p_arr, index[i_p], prob)
@@ -233,7 +263,7 @@ def sampled_av_probability(a: jnp.ndarray, dm_batch: np.ndarray):
     A = jax.vmap(sample_single_concurrence)(dm_batch)
     # print(A)
 
-    return jnp.mean(A, axis=0), jnp.sqrt(jnp.var(A, axis=0))
+    return A, jnp.sqrt(jnp.var(A, axis=0))
 
 
 def cnot_av_inconcurrence(x: jnp.ndarray, y: jnp.ndarray):
@@ -252,7 +282,7 @@ def cnot_av_inconcurrence(x: jnp.ndarray, y: jnp.ndarray):
 def optimize_protocol():
     # Sample points on the circle
     n_points = 1000
-    n_iter = 4
+    n_iter = 6
     n_guesses = 5
     n_components = 15
 
@@ -262,7 +292,7 @@ def optimize_protocol():
     t_arr = np.linspace(0.61, 1., n_points)
 
     dm_start = jax.vmap(werner)(f_arr)
-    # dm_start = jax.vmap(rho_zsolt)(t_arr)
+    dm_start = jax.vmap(rho_zsolt)(t_arr)
 
     for i_rand in range(n_points):
         t = 2 * np.pi * np.random.random()
@@ -274,13 +304,17 @@ def optimize_protocol():
     # x_array = np.array([0.5])
     # y_array = np.array([np.sqrt(0.5)])
     dm_start = generate_rhos(x_array, y_array)
-    gate_params = [np.zeros(n_components)]
+    gate_params = [np.zeros(n_components, dtype=jnp.float64)]
     best_fun = 1
     best_x = np.zeros(n_components)
+    best_ing = None
     new_rhos = dm_start
+    opt_curves = np.zeros((5000, n_iter, n_guesses), dtype=jnp.float64)
+    init_concurrence = []
     plot_lines = []
+    prob_per_iter = []
 
-    for i in range(n_iter):
+    for it in range(n_iter):
 
         def average_cost_function(a):
             # r_out = purified_dms(new_rhos, general_U(a[:n_components]))
@@ -291,57 +325,69 @@ def optimize_protocol():
 
         def average_prob(a):
 
-            av_p = sampled_av_probability(a, new_rhos)
+            av_p = sampled_av_probability(a, new_rhos)[0]
             return av_p
 
         cost_grad = grad(average_cost_function)
 
-        # def fun_call(x):
-        #    print(average_cost_function(x))
-
-        print(best_x, best_fun)
+        c_start = 1 - average_cost_function(gate_params[0])
         print(f"Initial concurrence: {1 - average_cost_function(gate_params[0])}")
-        print(average_prob(gate_params[0]))
+        init_concurrence.append(c_start)
+
         # if i == 0:
         #    plot_lines.append(1 - average_cost_function(gate_params[0]))
         # best_fun = average_cost_function(gate_params[0])
 
-        for i in range(n_guesses):
-            x0 = 2*np.pi*np.random.randn(n_components)
-            res = minimize(average_cost_function, x0=x0, method="l-bfgs-b", jac=cost_grad)
+        for i_ng in range(n_guesses):
+
+            def save_plot(v):
+                idx = np.count_nonzero(opt_curves[:, it, i_ng])
+                opt_curves[idx, it, i_ng] = (1 - average_cost_function(v))
+
+            x0 = 2 * np.pi * np.random.randn(n_components)
+            res = minimize(average_cost_function, x0=x0, method="l-bfgs-b", jac=cost_grad, callback=save_plot)
             print(res.fun)
             print(res.x)
-            print(average_prob(res.x))
             if res.fun < best_fun:
                 best_fun = res.fun
                 best_x = res.x
+                best_ing = i_ng
 
-        plot_lines.append(best_fun)
-        print(expm(1j * general_U(best_x)) / 0.35)
-        # gate_params.append(best_x)
+        print(opt_curves[:, it, best_ing])
+        non_zero_entries = np.count_nonzero(opt_curves[:, it, best_ing])
+        print(non_zero_entries)
+        prob_per_iter.append(average_prob(best_x))
+        plot_lines.append(opt_curves[:non_zero_entries, it, best_ing])
+        # print(expm(1j * general_U(best_x)) / 0.35)
+        gate_params.append(best_x)
         new_rhos = purified_dms(new_rhos, general_U(best_x))
 
+    print(plot_lines)
     plt.style.use("seaborn-colorblind")
-    plt.rc('lines', linewidth=3)
-    plt.title("Average concurrence plot")
-    from cycler import cycler
+    plt.rc('lines', linewidth=2)
+    # plt.title("Average concurrence plot")
     colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    plt.rcParams['figure.constrained_layout.use'] = True
     color_cycler = cycler('color', colors)
-    y = []
-    for i_p, p in enumerate(plot_lines):
-        y.append(1 - p)
-        plt.axhline(y=1 - p, label=f"Concurrence after protocol iteration {i_p + 2}",
-                    linestyle='-', color=colors[i_p])
 
+    plot_lines = np.concatenate(plot_lines, axis=0).flatten()
+    print(plot_lines.shape)
+
+    # for i_c, c in enumerate(plot_lines): print(c) plt_idx = np.count_nonzero(c) print(plt_idx_init,
+    # plt_idx) plt.plot(np.arange(plt_idx_init,  plt_idx_init + plt_idx), c[:plt_idx], label=f"Concurrence after
+    # protocol iteration {i_c + 2}", linestyle='-', color=colors[i_c]) plt_idx_init = plt_idx + plt_idx_init
+
+    plt.plot(plot_lines, linestyle='-')
     plt.rc('axes', prop_cycle=color_cycler)
-    # plt.axhline(y=plot_lines[0], label="Initial average concurrence", linestyle='-', color='r')
-    plt.clf()
-    plt.plot(np.arange(0, n_iter), y, label="Concurrence for each protocol iteration")
+    plt.axhline(y=init_concurrence[0], label="Initial average concurrence", linestyle='--', alpha=0.5)
+    plt.axhline(y=plot_lines[-1], label=f"Maximal concurrence after {n_iter} iterations", linestyle='--', alpha=0.5)
     plt.xlabel("Iterations with random restart")
     plt.ylabel(r"$C$")
     plt.legend()
     plt.show()
     plt.savefig("average_concurrence.png")
+
+    plt.clf()
 
 
 def main():
