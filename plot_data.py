@@ -5,7 +5,6 @@ import numpy as np
 import os
 from ent_purification import m1
 
-
 file1 = os.path.join("data/", "ent_purif_xy_solutions10_01_2021_08_20_47.txt")
 file2 = os.path.join("data/" "ent_purif_xy_solutions10_01_2021_07_12_33.txt")
 file3 = os.path.join("data/", "ent_purif_xy_solutions10_01_2021_02_10_54.txt")
@@ -16,7 +15,7 @@ for i_f, f in enumerate([file1, file2, file3]):
     fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
 
     x = data[:, -2]
-    y = data[:,-1]
+    y = data[:, -1]
     z = data[:, -4]
     plt.title(f"Gate {names[i_f]}")
     ax.plot_trisurf(x, y, z, cmap=cm.coolwarm,
@@ -27,9 +26,6 @@ for i_f, f in enumerate([file1, file2, file3]):
     ax.set_ylabel('Y axis')
     ax.set_zlabel(r'C(x,y)')
     plt.show()
-
-
-
 
 for s in data[:, :8]:
     print(s)

@@ -1,0 +1,3 @@
+- Save 10 4x4 matrices, check probabilities as function of x,y.
+- Check it for Werner states, C-state (this can be purified in one step).
+- Seed random number generator in numpy, jax.
