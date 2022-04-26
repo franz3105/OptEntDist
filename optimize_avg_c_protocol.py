@@ -18,14 +18,14 @@ import json
 
 from jax import lax
 from cycler import cycler
-from jax.scipy.linalg import expm
 from scipy.optimize import minimize
-from jax.ops import index, index_update
-from jax import jit, grad
+from jax import grad
 from functools import partial
 from qutip_wrapper import werner, rho_zsolt, transformed_werner, tranformed_mau_state
 from jax_minimize_wrapper import minimize
 from su4gate import gate
+
+# from su4gate import gate
 
 jax.config.update('jax_platform_name', 'cpu')
 jax.config.update('jax_enable_x64', True)
@@ -55,8 +55,8 @@ g15 = (1 / jnp.sqrt(6)) * jnp.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [
 gell_man_generators = (g2, g3, g5, g8, g10, g15)
 gen_seq = [g3, g2, g3, g5, g3, g10, g3, g2, g3, g5, g3, g2, g3, g8, g15]
 hp_rect = np.pi * np.array(
-    [1, 1 / 2, 1, 1 / 2, 1, 1 / 2, 1, 1 / 2, 1, 1 / 2, 1, 1 / 2, 1, 1 / np.sqrt(3), 1 / np.sqrt(6)])
-CNOT = jnp.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0]], dtype=jnp.complex128)
+    [1, 1 / 2, 1, 1 / 2, 1, 1 / 2, 1, 1 / 2, 1, 1 / 2, 1, 1 / 2, 1, 1 / np.sqrt(3), 1 / np.sqrt(6), 2 * np.pi])
+CNOT = jnp.array([[0, 1, 0, 0], [1, 0, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], dtype=jnp.complex128)
 
 
 def get_generators():
@@ -98,18 +98,16 @@ def safe_eigh_bwd(res, g):
     return g,
 
 
-safe_eigh.defvjp(safe_eigh_fwd, safe_eigh_bwd)
-
-
 def concurrence(rho: np.ndarray):
     YY = jnp.kron(Y, Y)
     rho_tilde = (rho.dot(YY)).dot(rho.conj().dot(YY))
     # print(rho)
-    eigs = -jnp.sort(-jnp.linalg.eigvals(rho_tilde))
+    eigs = jnp.abs(jnp.sort(jnp.real(-jnp.linalg.eigvals(rho_tilde))))
+    # print(eigs)
     # eigs = np.clip(eigs, 0, 1)
     comp_arr = jnp.array([0., jnp.sqrt(eigs[0]) - jnp.sqrt(eigs[1]) - jnp.sqrt(eigs[2]) - jnp.sqrt(eigs[3])])
 
-    return jnp.max(jnp.real(comp_arr))
+    return jnp.max(comp_arr)
 
 
 def partial_trace(rho: np.ndarray, subscripts='ijklmnkl->ijmn'):
@@ -131,13 +129,13 @@ def tensor(qubit_list):
     return s
 
 
-def general_U(a: np.ndarray):
+def gate_2(a: np.ndarray):
     # print(s)
     o = tensor([jnp.zeros((2, 2), dtype=jnp.complex128)] * 2)
     for i in range(a.shape[0]):
         o += a[i] * generators[i]
 
-    return o
+    return jsp.linalg.expm(1j * o)
 
 
 def gell_man_U(a: np.ndarray):
@@ -150,7 +148,7 @@ def gell_man_U(a: np.ndarray):
 
 
 def gen_SU4(a: np.ndarray):
-    return gate(*list(a))
+    return gate(*list(a[:15])) * jnp.exp(1j * a[15])
 
 
 def apply_entangling_gate(rho: np.ndarray, gate: np.ndarray):
@@ -182,10 +180,11 @@ def apply_entangling_gate(rho: np.ndarray, gate: np.ndarray):
 
 def purification(rho: np.ndarray, gate: np.ndarray):
     rho_t = apply_entangling_gate(rho, gate)
+    # print(gate)
 
-    proj_list = [p00, p01, p10, p11]
-    c_arr = jnp.array([0, ] * len(proj_list), dtype=jnp.complex128)
-    p_arr = jnp.array([0, ] * len(proj_list), dtype=jnp.complex128)
+    proj_list = [p00, p01]
+    c_arr = jnp.array([0, ] * len(proj_list), dtype=jnp.float64)
+    p_arr = jnp.array([0, ] * len(proj_list), dtype=jnp.float64)
     rf_arr = jnp.zeros((len(proj_list), rho.shape[0], rho.shape[1]), dtype=jnp.complex128)
 
     for i_p, p in enumerate(proj_list):
@@ -196,16 +195,21 @@ def purification(rho: np.ndarray, gate: np.ndarray):
         # print(rho_new.trace())
         rho_new = rho_new / (rho_new.trace() + 1e-6)
         rf = partial_trace(rho_new)
+        # print(concurrence(rf))
         c_arr = index_update(c_arr, index[i_p], concurrence(rf))
         p_arr = index_update(p_arr, index[i_p], prob)
         rf_arr = index_update(rf_arr, index[i_p, :, :], rf)
 
-    idx_pmax = jnp.argmax(jnp.real(c_arr))
+    idx_pmax = jnp.argmax(c_arr)
+    # idx_pmin = jnp.argmin(c_arr)
     c_max = jnp.real(c_arr)[idx_pmax]
+    # print(c_max)
     # print(jnp.round(jnp.real(p_arr),3))
     p_cmax = p_arr[idx_pmax]
     rf_out = rf_arr[idx_pmax]
-    # print(c_arr)
+
+    # print(c_max)
+
     return c_max, jnp.real(p_cmax), rf_out, idx_pmax
 
 
@@ -234,10 +238,6 @@ def double_Integral(xmin, xmax, ymin, ymax, nx, ny, A):
                  + 0.25 * (A_ul + A_ur + A_dl + A_dr))
 
     # Rayleigh distribution, 2D, rotational symmetry
-
-
-def f(x, y, sigma=0.2):
-    return 1  # (jnp.sqrt(x ** 2 + y ** 2) / sigma ** 2) * jnp.exp(-(x ** 2 + y ** 2) / (2 * sigma ** 2))
 
 
 def av_inconcurrence(n: jnp.int64, x: jnp.ndarray, y: jnp.ndarray):
@@ -272,11 +272,31 @@ def generate_rhos(x: jnp.ndarray, y: jnp.ndarray):
     # v4 = np.array([1/math.sqrt(2), 0, 0, 1/math.sqrt(2)], dtype=np.complex)
 
     def rho(p):
-        dm = (1 + p[0]) / 2 * jnp.outer(v1, v1) + (1 - p[0]) / 2 * jnp.outer(v3, v3) \
-             + 1j * p[1] / 2 * jnp.outer(v3, v1) - 1j * p[1] / 2 * jnp.outer(v1, v3)
+        dm = jnp.array([[(1 - p[0]) / 4, (1j * p[1]) / 4, -(1j * p[1]) / 4, 1 / 4 * (-1 + p[0])],
+                        [-(1j * p[1]) / 4, (1 + p[0]) / 4, 1 / 4 * (-1 - p[0]), (1j * p[1]) / 4],
+
+                        [(1j * p[1]) / 4, 1 / 4 * (-1 - p[0]), (1 + p[0]) / 4, -(1j * p[1]) / 4],
+                        [1 / 4 * (-1 + p[0]), -(1j * p[1]) / 4, (1j * p[1]) / 4, (1 - p[0]) / 4]], jnp.complex128)
+
         return dm
 
     return jax.vmap(rho)(xy_points)
+
+
+def f(x):
+    return 1
+
+
+def mauricio_av_inconcurrence(a: jnp.ndarray, x_arr: np.ndarray):
+    gate_a = gen_SU4(a)
+
+    def sample_single_concurrence(x):
+        dm = tranformed_mau_state(x)
+        return (1 - purification(dm, gate_a)[0]) * f(x)
+
+    A = jax.vmap(sample_single_concurrence)(x_arr)
+
+    return jnp.mean(A, axis=0)
 
 
 def sampled_av_inconcurrence(a: jnp.ndarray, dm_batch: np.ndarray, pdf=None):
@@ -350,23 +370,30 @@ def xy_state_sample(n_points, x_min, x_max):
     return dm_sample, (x_array, y_array)
 
 
-def optimize_protocol(state_name, n_points, n_iter, n_guesses, n_components):
+def xy_state(x_array, y_array):
+    dm_sample = generate_rhos(x_array, y_array)
+    return dm_sample, (x_array, y_array)
+
+
+def xy_state_rot(x_array, y_array):
+    v1 = jnp.array([0, -1 / jnp.sqrt(2), 1 / jnp.sqrt(2), 0], dtype=jnp.complex128)
+    # v2 = np.array([0, 1/math.sqrt(2), 1/math.sqrt(2), 0], dtype=np.complex)
+    v3 = jnp.array([-1 / jnp.sqrt(2), 0, 0, 1 / jnp.sqrt(2)], dtype=jnp.complex128)
+
+    def rho(p):
+        dm = (1 + jnp.sqrt(p[0] ** 2 + p[1] ** 2)) / 2 * jnp.outer(v1, v1) + \
+             (1 - jnp.sqrt(p[0] ** 2 + p[1] ** 2)) / 2 * jnp.outer(v3, v3)
+        return dm
+
+    dms = jax.vmap(rho)(jnp.array([y_array, x_array]).T)
+    return dms, (x_array, y_array)
+
+
+def optimize_protocol(dm_start, points, n_iter, n_guesses, n_components):
     # Sample points on the circle
 
-    if state_name == "Werner":
-        dm_start, points = werner_sample(werner, n_points, 0.51, 0.99)
-    elif state_name == "Transformed Werner":
-        dm_start, points = werner_sample(transformed_werner, n_points, 0.51, 0.99)
-    elif state_name == "Mauricio":
-        dm_start, points = mau_state_sample(rho_zsolt, n_points, 0.51, 0.99)
-    elif state_name == "Transformed Mauricio":
-        dm_start, points = mau_state_sample(tranformed_mau_state, n_points, 0.51, 0.99)
-    elif state_name == "XY":
-        dm_start, points = xy_state_sample(n_points, 0.01, 0.99)
-    else:
-        raise NotImplementedError("This type of state is not implemented!")
-
-    gate_params = [np.zeros(n_components, dtype=jnp.float64)]
+    gate_params = [np.zeros(n_components + 1, dtype=jnp.float64)]
+    n_points = dm_start.shape[0]
     best_fun = 1
     best_x = np.zeros(n_components)
     best_ing = None
@@ -398,11 +425,13 @@ def optimize_protocol(state_name, n_points, n_iter, n_guesses, n_components):
         cost_grad = grad(average_cost_function)
 
         c_start = 1 - average_cost_function(gate_params[0])
+        print(c_start)
         init_concurrence.append(c_start)
 
         # if i == 0:
         #    plot_lines.append(1 - average_cost_function(gate_params[0]))
         # best_fun = average_cost_function(gate_params[0])
+        best_fun = 1 - c_start
 
         for i_ng in range(n_guesses):
 
@@ -410,8 +439,7 @@ def optimize_protocol(state_name, n_points, n_iter, n_guesses, n_components):
                 idx = np.count_nonzero(opt_curves[:, it, i_ng])
                 opt_curves[idx, it, i_ng] = (1 - average_cost_function(v))
 
-            # x0 = np.random.randn(n_components)
-            x0 = np.random.uniform(-hp_rect, hp_rect, size=(n_components,))
+            x0 = np.random.uniform(np.zeros(n_components + 1), hp_rect, size=(n_components + 1,))
             res = minimize(average_cost_function, x0=x0, method="l-bfgs-b", jac=cost_grad, callback=save_plot)
             print(res.fun)
             print(res.x)
@@ -420,6 +448,10 @@ def optimize_protocol(state_name, n_points, n_iter, n_guesses, n_components):
                 best_x = res.x
                 best_ing = i_ng
 
+            # print(best_fun)
+            if best_fun < 1e-2:
+                break
+
         non_zero_entries = np.count_nonzero(opt_curves[:, it, best_ing])
         all_probs[:, it] = all_prob(best_x)
         plot_lines.append(opt_curves[:non_zero_entries, it, best_ing])
@@ -427,10 +459,12 @@ def optimize_protocol(state_name, n_points, n_iter, n_guesses, n_components):
         gate_params.append(best_x)
         new_rhos = purified_dms(new_rhos, gen_SU4(best_x))
         best_unitaries[it, :] = gen_SU4(best_x).flatten()
+        print(gen_SU4(best_x))
         best_concurrences[it] = 1 - best_fun
         prob_avg.append(np.mean(all_prob(best_x), axis=0))
 
-    return np.array(plot_lines, dtype=object), np.array(best_concurrences), np.array(np.real(prob_avg)), np.real(all_probs, dtype=object), \
+    return np.array(plot_lines, dtype=object), np.array(best_concurrences), np.array(np.real(prob_avg)), np.real(
+        all_probs), \
            best_unitaries, points
 
 
@@ -443,14 +477,30 @@ def main():
         pass
 
     # List of names of avaialble states
-    state_names = ["Werner", "Transformed Werner", "Mauricio", "Transformed Mauricio", "XY"]
-    # state_names = ["Transformed Werner"]
-    n_points = 1000
-    n_iter = 2
-    n_guesses = 2
+    # state_names = ["Werner"]
+    state_names = ["XY_single"]
+    n_points = 1
+    n_iter = 5
+    n_guesses = 5
     n_components = 15
 
     for sn in state_names:
+        if sn == "Werner":
+            dm_start, points = werner_sample(werner, n_points, 0.5, 1.0)
+        elif sn == "Transformed Werner":
+            dm_start, points = werner_sample(transformed_werner, n_points, 0.51, 0.99)
+        elif sn == "Mauricio":
+            dm_start, points = mau_state_sample(rho_zsolt, n_points, 0.51, 0.99)
+        elif sn == "Transformed Mauricio":
+            dm_start, points = mau_state_sample(tranformed_mau_state, n_points, 0.51, 0.99)
+        elif sn == "XY_avg":
+            dm_start, points = xy_state_sample(n_points, 0.1, 0.95)
+        elif sn == "XY_single":
+            x_array = np.array([0.25])
+            y_array = np.array([0.25])
+            dm_start, points = xy_state_rot(x_array, y_array)
+        else:
+            raise NotImplementedError("This type of state is not implemented!")
         hyperparams = dict(state_name=sn, n_points=n_points, n_iter=n_iter, n_guesses=n_guesses,
                            n_components=n_components)
 
@@ -461,13 +511,13 @@ def main():
             pass
 
         plot_lines, best_concurrences, probabilities, all_probs, best_unitaries, data_points = \
-            optimize_protocol(sn, n_points, n_iter, n_guesses, n_components)
+            optimize_protocol(dm_start, points, n_iter, n_guesses, n_components)
 
         # np.savetxt(os.path.join(sn_folder_path, "plotlines.txt"), plot_lines)
         np.savetxt(os.path.join(sn_folder_path, "best_concurrences.txt"), best_concurrences)
         np.savetxt(os.path.join(sn_folder_path, "avg_probabilities.txt"), probabilities)
         np.savetxt(os.path.join(sn_folder_path, "probabilities.txt"), all_probs)
-        np.savetxt(os.path.join(sn_folder_path, "best_unitaries.txt"), best_unitaries)
+        np.savetxt(os.path.join(sn_folder_path, "data/best_unitaries.txt"), best_unitaries)
         np.savetxt(os.path.join(sn_folder_path, "state_parameters_point.txt"), np.vstack(data_points))
         with open(os.path.join(sn_folder_path, 'opt_data.json'), 'w') as fp:
             json.dump(hyperparams, fp)
@@ -519,7 +569,7 @@ def plot(data_folder):
     plt.xticks(range(1, best_concurrences.shape[0] + 1))
     plt.legend()
     # plt.ion()
-    plt.savefig(os.path.join(data_folder, "average_concurrence.png"))
+    plt.savefig(os.path.join(data_folder, "data/average_concurrence.png"))
 
     plt.figure(2)
     plt.plot(x_data, probs, "o-", linewidth=2, label="Average probability")
@@ -528,7 +578,7 @@ def plot(data_folder):
     plt.xticks(range(1, best_concurrences.shape[0] + 1))
     plt.legend()
     # plt.ion()
-    plt.savefig(os.path.join(data_folder, "average_probability.png"))
+    plt.savefig(os.path.join(data_folder, "data/average_probability.png"))
 
     if hyperparams["state_name"] != "XY":
         # 2D plot for other states
