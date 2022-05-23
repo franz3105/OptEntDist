@@ -1,10 +1,10 @@
 from pymoo.algorithms.nsga2 import NSGA2
-from pymoo.factory import get_problem
 from pymoo.optimize import minimize
 from pymoo.visualization.scatter import Scatter
 from pymoo.model.problem import Problem
-from ent_purification import probability, infidelity, m1, m2, m3, rho_xy, rho_zsolt
-from pymoo.factory import get_sampling, get_crossover, get_mutation, get_termination
+from optimize_c_protocol import probability, infidelity, m1
+from qutip_wrapper import rho_xy
+
 import numpy as np
 
 
@@ -33,7 +33,7 @@ class EntPurif(Problem):
 
 x = 0.25
 y = np.sqrt(1 - x ** 2)
-problem = EntPurif(x, y, np.pi/2)
+problem = EntPurif(x, y, np.pi / 2)
 algorithm = NSGA2(pop_size=50)
 
 res = minimize(problem,
@@ -44,7 +44,7 @@ res = minimize(problem,
 
 print(res.X, res.F, res.G, res.CV)
 plot = Scatter(labels=["1 - $F$", r"1 - $p$"])
-#plot.add(problem.pareto_front(), plot_type="line", color="black", alpha=0.7)
+# plot.add(problem.pareto_front(), plot_type="line", color="black", alpha=0.7)
 plot.add(res.F, color="red")
 plot.show()
 plot.save(f"plot_{x}_{y}_pymoo")

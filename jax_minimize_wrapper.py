@@ -1,18 +1,65 @@
 """
 A collection of helper functions for optimization with JAX.
-Copyright https://gist.github.com/slinderman/24552af1bdbb6cb033bfea9b2dc4ecfd
+Reference https://gist.github.com/slinderman/24552af1bdbb6cb033bfea9b2dc4ecfd
 """
-import jax
 import numpy as onp
 import scipy.optimize
+import numpy as np
 from jax import grad, jit
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax.flatten_util import ravel_pytree
 from itertools import count
+import time
+import warnings
 
-jax.config.update('jax_enable_x64', True)
 
-def minimize(fun, x0,
+class TookTooLong(Warning):
+    pass
+
+
+class MinimizeStopper(object):
+    def __init__(self, max_sec=60):
+        self.max_sec = max_sec
+        self.start = time.time()
+
+    def __call__(self, xk=None):
+        elapsed = time.time() - self.start
+        if elapsed > self.max_sec:
+            warnings.warn("Terminating optimization: time limit reached",
+                          TookTooLong)
+        else:
+            # you might want to report other stuff here
+            print("Elapsed: %.3f sec" % elapsed)
+
+
+class MemoizeJac:
+    """ Decorator that caches the return values of a function returning `(fun, grad)`
+        each time it is called. """
+
+    def __init__(self, fun):
+        self.fun = fun
+        self.jac = None
+        self._value = None
+        self.x = None
+
+    def _compute_if_needed(self, x, *args):
+        if not np.all(x == self.x) or self._value is None or self.jac is None:
+            self.x = np.asarray(x).copy()
+            fg = self.fun(x, *args)
+            self.jac = fg[1]
+            self._value = fg[0]
+
+    def __call__(self, x, *args):
+        """ returns the the function value """
+        self._compute_if_needed(x, *args)
+        return self._value
+
+    def derivative(self, x, *args):
+        self._compute_if_needed(x, *args)
+        return self.jac
+
+
+def minimize_jax(fun, x0,
              method=None,
              args=(),
              bounds=None,
@@ -20,7 +67,8 @@ def minimize(fun, x0,
              tol=None,
              callback=None,
              options=None,
-             jac=None):
+             jac=None,
+             hess=None):
     """
     A simple wrapper for scipy.optimize.minimize using JAX.
     
@@ -144,12 +192,26 @@ def minimize(fun, x0,
     if method != "Nelder-Mead":
         if jac is None:
             jac = jit(grad(fun))
+        elif jac is True:
+            # fun returns func and grad
+            fun = MemoizeJac(fun)
+            jac = fun.derivative
         else:
             jac = jit(jac)
+
+        if hess is None:
+            pass
+        else:
+            hess = hess
 
     def jac_wrapper(x_flat, *args):
         x = unravel(x_flat)
         g_flat, _ = ravel_pytree(jac(x, *args))
+        return onp.array(g_flat)
+
+    def hess_wrapper(x_flat, *args):
+        x = unravel(x_flat)
+        g_flat, _ = ravel_pytree(hess(x, *args))
         return onp.array(g_flat)
 
     # Wrap the callback to consume a pytree
@@ -159,17 +221,29 @@ def minimize(fun, x0,
             return callback(x, *args)
 
     # Minimize with scipy
-    results = scipy.optimize.minimize(fun_wrapper,
-                                      x0_flat,
-                                      args=args,
-                                      method=method,
-                                      jac=jac_wrapper,
-                                      callback=callback_wrapper,
-                                      bounds=bounds,
-                                      constraints=constraints,
-                                      tol=tol,
-                                      options=options)
-
+    if hess:
+        results = scipy.optimize.minimize(fun_wrapper,
+                                          x0_flat,
+                                          args=args,
+                                          method=method,
+                                          jac=jac_wrapper,
+                                          callback=callback_wrapper,
+                                          bounds=bounds,
+                                          constraints=constraints,
+                                          tol=tol,
+                                          options=options,
+                                          hess=hess_wrapper)
+    else:
+        results = scipy.optimize.minimize(fun_wrapper,
+                                          x0_flat,
+                                          args=args,
+                                          method=method,
+                                          jac=jac_wrapper,
+                                          callback=callback_wrapper,
+                                          bounds=bounds,
+                                          constraints=constraints,
+                                          tol=tol,
+                                          options=options)
     # pack the output back into a PyTree
     results["x"] = unravel(results["x"])
     return results

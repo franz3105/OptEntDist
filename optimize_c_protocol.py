@@ -8,14 +8,8 @@ import qutip as qt
 import jax.scipy as jsp
 import jax.numpy as jnp
 import jax
-from qutip.measurement import measure, measurement_statistics
-from qutip.qip.operations import controlled_gate, cnot, molmer_sorensen
 import numpy as np
-import matplotlib.pyplot as plt
-import random
-from jax.ops import index, index_update
-from jax import jit
-from qutip_wrapper import rho_xy
+from qutip_wrapper import rho_zsolt, rho_xy
 
 jax.config.update('jax_enable_x64', True)
 
