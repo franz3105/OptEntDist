@@ -14,7 +14,7 @@ import jax.scipy as jsp
 import os
 import json
 
-from jax import value_and_grad
+from jax import value_and_grad, jit
 from cycler import cycler
 from qutip_wrapper import tranformed_mau_state
 from jax_minimize_wrapper import minimize_jax
@@ -51,8 +51,8 @@ g15 = (1 / jnp.sqrt(6)) * jnp.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [
 gell_man_generators = (g2, g3, g5, g8, g10, g15)
 gen_seq = [g3, g2, g3, g5, g3, g10, g3, g2, g3, g5, g3, g2, g3, g8, g15]
 hp_rect = np.pi * np.array(
-    [1, 1 / 2, 1, 1 / 2, 1, 1 / 2, 1, 1 / 2, 1, 1 / 2, 1, 1 / 2, 1, 1 / np.sqrt(3), 1 / np.sqrt(6), 2 * np.pi])
-CNOT = jnp.array([[0, 1, 0, 0], [1, 0, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], dtype=jnp.complex128)
+    [1, 1 / 2, 1, 1 / 2, 1, 1 / 2, 1, 1 / 2, 1, 1 / 2, 1, 1 / 2, 1, 1 / np.sqrt(3), 1 / np.sqrt(6)])
+CNOT = np.exp(1j*np.pi/2)*jnp.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0]], dtype=jnp.complex128)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -69,7 +69,7 @@ def get_generators():
 
     return generators
 
-
+#@jit
 def concurrence(rho: np.ndarray):
     """
     Function computing the concurrence
@@ -80,14 +80,15 @@ def concurrence(rho: np.ndarray):
     YY = jnp.kron(Y, Y)
     rho_tilde = (rho.dot(YY)).dot(rho.conj().dot(YY))
     eigs = -jnp.linalg.eigvals(rho_tilde)
-    eigs = jnp.abs(jnp.sort(jnp.real(eigs)))
+    eigs = jnp.abs(jnp.sort(jnp.real(eigs))) + 1e-8
 
-    eigs = jnp.clip(eigs, 1e-8, 1)  # Bounds for numerical stability
+    #eigs = jnp.clip(eigs, 1e-6, 1)  # Bounds for numerical stability
     comp_arr = jnp.array([0., jnp.sqrt(eigs[0]) - jnp.sqrt(eigs[1]) - jnp.sqrt(eigs[2]) - jnp.sqrt(eigs[3])])
+    #print(comp_arr)
 
     return jnp.max(comp_arr)
 
-
+#@jit
 def partial_trace(rho: np.ndarray, subscripts='ijklmnkl->ijmn'):
     """
 
@@ -117,7 +118,7 @@ def tensor(qubit_list):
 
     return s
 
-
+#@jit
 def gell_man_U(a: np.ndarray):
     """
     General SU(4) Euler parametrization (see su4gate.py)
@@ -131,7 +132,7 @@ def gell_man_U(a: np.ndarray):
 
     return o
 
-
+#@jit
 def gen_SU4(a: np.ndarray):
     """
     Analytic expression of a SU(4) gate derived from Mathematica.
@@ -139,9 +140,9 @@ def gen_SU4(a: np.ndarray):
     :return: general SU(4) unitary
     """
 
-    return gate(*list(a[:15]))
+    return gate(*list(a))
 
-
+#@jit
 def apply_entangling_gate(rho: np.ndarray, unitary_gate: np.ndarray):
     """
 
@@ -174,7 +175,7 @@ def apply_entangling_gate(rho: np.ndarray, unitary_gate: np.ndarray):
 
     return rho_t
 
-
+#@jit
 def purification(rho: np.ndarray, unitary_gate: np.ndarray):
     """
 
@@ -315,7 +316,7 @@ def generate_rhos(x: jnp.ndarray, y: jnp.ndarray):
 
 
 def f(x, sigma=1):
-    return 1/(2*np.pi*sigma)**0.5*np.exp(0.5 * (x[0]**2 + x[1]**2) / sigma ** 2)
+    return 1#1/(2*np.pi*sigma)**0.5*np.exp(0.5 * (x[0]**2 + x[1]**2) / sigma ** 2)
 
 
 def mauricio_av_inconcurrence(a: jnp.ndarray, x_arr: np.ndarray):
@@ -327,6 +328,7 @@ def mauricio_av_inconcurrence(a: jnp.ndarray, x_arr: np.ndarray):
     """
     gate_a = gen_SU4(a)
 
+    #@jit
     def sample_single_concurrence(x):
         dm = tranformed_mau_state(x)
         return (1 - purification(dm, gate_a)[0]) * f(x)
@@ -343,8 +345,9 @@ def sampled_av_inconcurrence(a: jnp.ndarray, dm_batch: np.ndarray):
     :param a: entangling gate parameters
     :return: average concurrence (sampled)
     """
-    gate_1 = gen_SU4(a[:15])
+    gate_1 = gen_SU4(a)
 
+    #@jit
     def sample_single_concurrence(dm):
         return 1 - purification(dm, gate_1)[0]
 
@@ -352,6 +355,22 @@ def sampled_av_inconcurrence(a: jnp.ndarray, dm_batch: np.ndarray):
 
     return jnp.mean(A, axis=0)
 
+def sampled_av_cnot_inconcurrence(dm_batch: np.ndarray):
+    """
+    Average inconcurrence of a batch of density matrices.
+    :param dm_batch:  batch of density matrices
+    :param a: entangling gate parameters
+    :return: average concurrence (sampled)
+    """
+    gate_1 = CNOT
+
+    #@jit
+    def sample_single_concurrence(dm):
+        return 1 - purification(dm, gate_1)[0]
+
+    A = jax.vmap(sample_single_concurrence)(dm_batch)
+
+    return jnp.mean(A, axis=0)
 
 def sampled_av_probability(a: jnp.ndarray, dm_batch: np.ndarray):
     """
@@ -364,6 +383,7 @@ def sampled_av_probability(a: jnp.ndarray, dm_batch: np.ndarray):
 
     # print(unitary_gate.dot(unitary_gate.T.conjugate()))
 
+    #@jit
     def sample_single_concurrence(dm):
         return 2 * purification(dm, gate)[1]
 
@@ -476,26 +496,32 @@ def optimize_protocol(dm_start, points, n_iter, n_guesses, n_components):
     """
     # Sample points on the circle
 
-    gate_params = [np.zeros(n_components + 1, dtype=jnp.float64)]
+    gate_params = [np.zeros(n_components, dtype=jnp.float64)]
     n_points = dm_start.shape[0]
     best_x = np.zeros(n_components)
     best_ing = None
     new_rhos = dm_start
-    opt_curves = np.zeros((5000, n_iter, n_guesses), dtype=jnp.float64)
-    init_concurrence = []
+    opt_curves = np.zeros((5000, n_iter+1, n_guesses), dtype=jnp.float64)
+    concurrences = []
     plot_lines = []
-    all_probs = np.zeros((n_points, n_iter))
-    best_concurrences = np.zeros(n_iter)
-    best_unitaries = np.zeros((n_iter, 16), dtype=np.complex128)
+    all_probs = np.zeros((n_points, n_iter+1))
+    best_concurrences = np.zeros(n_iter+1)
+    best_unitaries = np.zeros((n_iter+1, 16), dtype=np.complex128)
     prob_avg = []
-    np.random.seed(0)
+    #np.random.seed(0)
+    cnot = False
 
-    for it in range(n_iter):
-        print(f"Iteration {it + 1}/{n_iter}")
+    for it in range(1, n_iter+1):
+        print(f"Iteration {it}/{n_iter}")
 
         def average_cost_function(a):
             # r_out = purified_dms(new_rhos, general_U(a[:n_components]))
-            av_c = sampled_av_inconcurrence(a, new_rhos)
+            #av_c = sampled_av_inconcurrence(a, new_rhos)
+            if cnot:
+                av_c = sampled_av_cnot_inconcurrence(new_rhos)
+            else:
+                av_c = sampled_av_inconcurrence(a, new_rhos)
+
             # new_rhos = purified_dms(new_rhos, general_U(best_x))[:, 0, :, :]
 
             return av_c
@@ -508,24 +534,29 @@ def optimize_protocol(dm_start, points, n_iter, n_guesses, n_components):
         cost_and_grad = value_and_grad(average_cost_function)
 
         c_start = 1 - average_cost_function(gate_params[0])
-        # print(c_start)
-        init_concurrence.append(c_start)
 
-        # if i == 0:
-        #    plot_lines.append(1 - average_cost_function(gate_params[0]))
-        # best_fun = average_cost_function(gate_params[0])
         best_fun = 1 - c_start
         print(f"Initial concurrence iteration {it}: {best_fun}")
+        best_concurrences[0] = c_start
+        #print(f"CNOT concurrence: {1 - sampled_av_cnot_inconcurrence(new_rhos)}")
 
         for i_ng in range(n_guesses):
-
-            x0 = np.random.uniform(np.zeros(n_components + 1), hp_rect, size=(n_components + 1,))
+            if it == 1:  # Use this ansatz for the XY state, then it becomes easier to find the
+            # first good guess for the optimization. This was found during our experiments. It can be found also under
+            # normal circumstances, but it requires running the algorithm multiple times with lots of seeds.
+                x0 = np.array([1.27223927, 1.8222995,  1.01031067, 0.7565204,  1.91471685, 1.37198244,
+                      0.11381644, 1.04697845, 0.92621291, 0.46467374, 1.10616393, 0.4426136,
+                      1.2732354, 0.36559595, 1.35753604])
+            else:
+                x0 = np.random.uniform(np.zeros(n_components), hp_rect, size=(n_components,))
             res = minimize_jax(cost_and_grad, x0=x0, method="l-bfgs-b", jac=True)
-            print(f"Best concurrence guess {i_ng}: {res.fun}")
+            print(f"Best inconcurrence guess {i_ng}: {res.fun}")
             print(res.x)
+
             if res.fun < best_fun:
                 best_fun = res.fun
                 best_x = res.x
+                concurrences.append(1 - res.fun)
                 best_ing = i_ng
 
             if best_fun < 1e-2:
@@ -534,11 +565,18 @@ def optimize_protocol(dm_start, points, n_iter, n_guesses, n_components):
         all_probs[:, it] = all_prob(best_x)
         print(f"Best concurrence iteration {it}: {1 - average_cost_function(best_x)}")
         gate_params.append(best_x)
-        new_rhos = purified_dms(new_rhos, gen_SU4(best_x))
         best_unitaries[it, :] = gen_SU4(best_x).flatten()
         #print(gen_SU4(best_x))
         best_concurrences[it] = 1 - best_fun
+        print(best_concurrences)
         prob_avg.append(np.mean(all_prob(best_x), axis=0))
+
+        if cnot:
+            new_rhos = purified_dms(new_rhos, CNOT)
+        else:
+            new_rhos = purified_dms(new_rhos, gen_SU4(best_x))
+
+
 
     res = np.array(best_concurrences), np.array(np.real(prob_avg)), np.real(
         all_probs), best_unitaries, points
