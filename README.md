@@ -28,7 +28,7 @@ To do:
 
 
 ## Acknowledgements
-Many thanks to https://github.com/ritaly/README-cheatsheet/blob/master/README.md?plain=1
+Many thanks to https://github.com/ritaly/README-cheatsheet
 
 
 ## Contact
