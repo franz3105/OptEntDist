@@ -4,10 +4,11 @@ import json
 import jax
 import datetime
 import pickle
+import h5py
 
 from qutip_wrapper import werner, rho_zsolt, transformed_werner, tranformed_mau_state
 from optimize_avg_c_protocol import werner_sample, mau_state_sample, xy_state_sample, xy_state_rot, optimize_protocol, \
-    plot, concurrence
+    plot, concurrence, test_optimized_protocol
 from load_2_qubit_dm import load_data
 
 
@@ -45,7 +46,8 @@ def run_simulation(state_names=None,
     for sn in state_names:
         if sn == "2-qubit-dm":
             dm_start, points = load_data("random_dm_2.csv", "random_a_vectors.csv")
-            n_points = dm_start.shape[0]
+            # n_points = dm_start.shape[0]
+
             # c_dm = jax.vmap(concurrence)(dm_start)
             # idx_non_zero = np.where(c_dm > 1e-15)[0]
             # dm_start = dm_start[idx_non_zero]
@@ -77,34 +79,67 @@ def run_simulation(state_names=None,
         else:
             pass
 
-        best_concurrences, probabilities, best_unitaries, data_points, gtc_mean, gtp_mean, gtc_std, gtp_std = \
+        if not isinstance(dm_start, list):
+            dm_start = [dm_start, ]
+            points = [points, ]
+
+        best_concurrences, probabilities, gate_params, data_points, gtc_mean, gtp_mean, gtc_var, gtp_var, all_c = \
             optimize_protocol(dm_start, points, n_iter, n_guesses, n_components, gate_name=gate_name,
                               proj_vec=proj_vec, n_idx=n_opt)
 
         # np.savetxt(os.path.join(sn_folder_path, "plotlines.txt"), plot_lines)
         np.savetxt(os.path.join(sn_folder_path, f"best_concurrences_{0}.txt"), best_concurrences)
         np.savetxt(os.path.join(sn_folder_path, f"avg_probabilities_{0}.txt"), probabilities)
-        np.savetxt(os.path.join(sn_folder_path, f"best_unitaries_{0}.txt"), best_unitaries)
+        np.savetxt(os.path.join(sn_folder_path, f"best_params_{0}.txt"), gate_params)
         np.savetxt(os.path.join(sn_folder_path, f"state_parameters_point_{0}.txt"), np.vstack(data_points))
         np.savetxt(os.path.join(sn_folder_path, f"gtc_mean_{0}.txt"), gtc_mean)
         np.savetxt(os.path.join(sn_folder_path, f"gtp_mean_{0}.txt"), gtp_mean)
-        np.savetxt(os.path.join(sn_folder_path, f"gtc_std_{0}.txt"), gtc_std)
-        np.savetxt(os.path.join(sn_folder_path, f"gtp_std_{0}.txt"), gtp_std)
+        np.savetxt(os.path.join(sn_folder_path, f"gtc_var_{0}.txt"), gtc_var)
+        np.savetxt(os.path.join(sn_folder_path, f"gtp_var_{0}.txt"), gtp_var)
+        # Save all_c as hdf5 file
+        with h5py.File(os.path.join(sn_folder_path, f"all_c_{0}.hdf5"), 'w') as hf:
+            hf.create_dataset("all_c", data=all_c)
+
         with open(os.path.join(sn_folder_path, f'opt_data_{0}.pkl'), 'wb') as fp:
             pickle.dump(hyperparams, fp)
 
+        n_dm_files = 0
+        n_points = int(1e6)
+        dm_start = []
+        points = []
+        fld = os.path.join(cwd, "data_all_dms")
+        n_comp_1 = int(n_components / 2)
+
+        for i in range(1, 1 + n_dm_files):
+            dm_array, points_array = load_data(os.path.join(fld, f"random_dm_2_{i}_{n_points}.csv"),
+                                               os.path.join(fld, f"random_a_vectors_{i}_{n_points}.csv"),
+                                               n_points, a_size=30)
+            gtc_mean_test, gtp_mean_test, gtc_var_test, gtp_var_test, all_c_test = \
+                test_optimized_protocol(dm_array, n_iter, n_points, proj_vec, gate_params, gate_name, n_comp_1)
+
+            np.savetxt(os.path.join(sn_folder_path, f"gtc_mean_test{i}.txt"), gtc_mean_test)
+            np.savetxt(os.path.join(sn_folder_path, f"gtp_mean_test{i}.txt"), gtp_mean_test)
+            np.savetxt(os.path.join(sn_folder_path, f"gtc_var_test{i}.txt"), gtc_var_test)
+            np.savetxt(os.path.join(sn_folder_path, f"gtp_var_test{i}.txt"), gtp_var_test)
+
+            # Save all_c_test as hdf5 file
+            with h5py.File(os.path.join(sn_folder_path, f"all_c_test{i}.hdf5"), 'w') as hf:
+                hf.create_dataset("all_c_test", data=all_c_test)
+
+            dm_start.append(dm_array)
+            points.append(points_array)
             # plot(sn_folder_path)
 
     return
 
 
 def main():
-    projectors = [np.array([1, 0, 1, 1]), np.zeros(4), np.array([1, 0, 1, 0]), np.array([0, 1, 0, 1]),
+    projectors = [np.array([1, 0, 1, 1]), np.ones(4), np.array([1, 0, 1, 0]), np.array([0, 1, 0, 1]),
                   np.array([1, 1, 0, 0]), np.array([0, 0, 1, 1]), np.array([1, 0, 0, 1]), np.array([0, 1, 1, 0]),
                   np.array([1, 1, 1, 0])]
 
     for i_p, p in enumerate(projectors):
-        for gn in ["SU4", "circuit"]:
+        for gn in ["SU4", ]:
             run_simulation(state_names=["2-qubit-dm"],
                            n_points=1000,
                            n_iter=1,
@@ -112,7 +147,7 @@ def main():
                            gate_name=gn,
                            seed=0,
                            proj_vec=p,
-                           n_opt=10)
+                           n_opt=1000)
 
 
 if __name__ == "__main__":

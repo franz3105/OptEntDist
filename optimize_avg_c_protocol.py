@@ -258,7 +258,7 @@ def apply_entangling_gate(rho_1: np.ndarray, rho_2: np.ndarray, unitary_gate: np
 
     rho_t = (((UA.dot(UB)).dot(rho_f)).dot(UBc)).dot(UAc)
 
-    # rho_t = rho_t / (rho_t.trace() + 1e-6)
+    # rho_t = rho_t / (rho_t.trace() + 1e-15)
 
     return rho_t
 
@@ -286,11 +286,15 @@ def purification(rho_A: np.ndarray, unitary_gate_1: np.ndarray, unitary_gate_2: 
 
     for i_p, p in enumerate(proj_list):
         proj = jnp.kron(Id4, p)
-        rho_new = (proj.dot(rho_t)).dot(proj)
-        prob = jnp.real((rho_new.trace() + 1e-9))
+        p_new = jnp.trace(rho_t)
+
+        rho_new_t = rho_t / (jnp.trace(rho_t) + 1e-15)
+
+        rho_new = (proj.dot(rho_new_t)).dot(proj)
+        prob = jnp.real(p_new*(rho_new.trace()))
         # print(rho_new)
         # print(rho_new.trace())
-        rho_new = rho_new / prob
+        rho_new = rho_new / (rho_new.trace() + 1e-15)
         rf = partial_trace(rho_new)
         # print(concurrence(rf))
         c_arr = c_arr.at[i_p].set(concurrence(rf))
@@ -614,14 +618,14 @@ def xy_state_rot(x_array, y_array):
     return dms, (x_array, y_array)
 
 
-def optimize_protocol(dm_start, points, n_iter, n_guesses, n_components, gate_name="SU4", proj_vec=np.zeros(4),
+def optimize_protocol(dm_start_list, points, n_iter, n_guesses, n_components, gate_name="SU4", proj_vec=np.zeros(4),
                       n_idx=None):
     """
 
     :param n_idx: Number of points to sample from the initial batch.
     :param proj_vec: Projection vector for the parametrization.
     :param gate_name: Type of parametrization (Euler or SU(4))
-    :param dm_start: Initial batch of density matrices.
+    :param dm_start_list: Initial batch of density matrices.
     :param points: Number of sampled points
     :param n_iter: Number of protocol iterations
     :param n_guesses: Number of guesses per iteration
@@ -635,8 +639,9 @@ def optimize_protocol(dm_start, points, n_iter, n_guesses, n_components, gate_na
     """
     # Sample points on the circle
 
+    n_batch = len(dm_start_list)
     gate_params = [np.zeros(n_components, dtype=jnp.float64)]
-    n_points = dm_start.shape[0]
+    n_points = dm_start_list[0].shape[0]
     best_x = np.zeros(n_components)
     best_ing = None
     opt_curves = np.zeros((5000, n_iter + 1, n_guesses), dtype=jnp.float64)
@@ -654,9 +659,9 @@ def optimize_protocol(dm_start, points, n_iter, n_guesses, n_components, gate_na
     if n_idx is None:
         n_idx = 1000
 
-    idx_random = np.random.choice(len(points), n_points, replace=False)[:n_idx]
+    idx_random = np.random.choice(points[0].shape[0], n_points, replace=False)[:n_idx]
     n_comp_1 = int(n_components / 2)
-    rhos = dm_start[idx_random, ::]
+    rhos = dm_start_list[0][idx_random, ::]
     zero_comp = np.zeros(n_comp_1)
     c_max_rnd = 0
     best_xA = np.zeros(n_comp_1)
@@ -677,8 +682,13 @@ def optimize_protocol(dm_start, points, n_iter, n_guesses, n_components, gate_na
     #        best_xB = a_B
 
     # print(c_max_rnd)
-    proj_rhos = purified_dms(dm_start, general_2q_quantum_operation(proj_vec),
+    # print(general_2q_quantum_operation(proj_vec))
+    print(n_idx)
+    proj_rhos = purified_dms(dm_start_list[0], general_2q_quantum_operation(proj_vec),
                              general_2q_quantum_operation(proj_vec))
+    print(proj_rhos.shape)
+    pr_tr = jnp.trace(proj_rhos, axis1=1, axis2=2)
+    print(pr_tr[pr_tr > 0])
     # rhos = purified_dms(rhos, general_2q_quantum_operation(np.array(a)),
     #                         general_2q_quantum_operation(np.array(a)))
     # proj_rhos = dm_start
@@ -700,8 +710,8 @@ def optimize_protocol(dm_start, points, n_iter, n_guesses, n_components, gate_na
             nr = rhos
 
             if not cnot:
-                av_c = 1 - sampled_av_inconcurrence(a, nr, gate_name=gate_name) / n_idx + \
-                       0.01 * (1 - sampled_av_probability(a, nr, gate_name=gate_name) / n_idx)
+                av_c = 1 - sampled_av_inconcurrence(a, nr, gate_name=gate_name) / n_idx #+ \
+                       #0.01 * (1 - sampled_av_probability(a, nr, gate_name=gate_name) / n_idx)
             else:
                 av_c = sampled_av_gate_inconcurrence(nr, CNOT, CNOT, gate_name=gate_name) / n_idx
 
@@ -775,36 +785,87 @@ def optimize_protocol(dm_start, points, n_iter, n_guesses, n_components, gate_na
         if best_fun < 1e-2:
             break
 
-    nr = proj_rhos
     gtc_mean = np.zeros(n_iter)
     gtp_mean = np.zeros(n_iter)
-    gtc_std = np.zeros(n_iter)
-    gtp_std = np.zeros(n_iter)
-    c_std_err = jnp.std(jax.vmap(concurrence)(nr)) / n_all
-    p_std_err = jnp.std(jax.vmap(success_prob)(nr)) / np.sqrt(n_all - 1)
-    gtc_std[0] = c_std_err
-    gtp_std[0] = p_std_err
-    gtc_mean[0] = jnp.sum(jax.vmap(concurrence)(dm_start)) / n_all
-    gtp_mean[0] = jnp.sum(jax.vmap(success_prob)(dm_start)) / n_all
-    print(f"Data set average concurrence at the start: {gtc_mean[0]} +/- {c_std_err}")
+    gtc_var = np.zeros(n_iter)
+    gtp_var = np.zeros(n_iter)
+    all_c = np.zeros((dm_start_list[0].shape[0], n_iter))
+
+    for ib in range(n_batch):
+        print(f"Data set {ib}")
+
+        c_std_err = jnp.std(jax.vmap(concurrence)(dm_start_list[ib])) / np.sqrt(n_all - 1)
+        p_std_err = jnp.std(jax.vmap(success_prob)(dm_start_list[ib])) / np.sqrt(n_all - 1)
+        gtc_var[0] += c_std_err ** 2 / n_batch
+        gtp_var[0] += p_std_err ** 2 / n_batch
+        gtp_mean[0] += jnp.sum(jax.vmap(success_prob)(dm_start_list[ib])) / (n_all * n_batch)
+        all_c[:, 0] = jax.vmap(concurrence)(dm_start_list[ib])
+        gtc_mean[0] += jnp.sum(all_c[:, 0]) / (n_all * n_batch)
+
+        if ib == 0:
+            nr = proj_rhos
+        else:
+            nr = purified_dms(dm_start_list[ib], general_2q_quantum_operation(proj_vec),
+                              general_2q_quantum_operation(proj_vec))
+        print(f"Data set average concurrence at the start: {gtc_mean[0]} +/- {np.sqrt(c_std_err)}")
+
+        for i in range(1, n_iter):
+            all_c[:, i] = jax.vmap(concurrence)(nr)
+            c_avg = jnp.sum(all_c[:, i]) / n_all
+            c_std_err = jnp.std(jax.vmap(concurrence)(nr)) / np.sqrt(n_all - 1)
+            nr = purified_dms(nr, gen_SU4(gate_params[i][n_comp_1:], gate_name=gate_name),
+                              gen_SU4(gate_params[i][:n_comp_1], gate_name=gate_name))
+            p_avg = jnp.sum(jax.vmap(success_prob)(nr)) / n_all
+            p_std_err = jnp.std(jax.vmap(success_prob)(nr)) / np.sqrt(n_all - 1)
+            gtc_mean[i] += c_avg / n_batch
+            gtp_mean[i] += p_avg / n_batch
+            gtc_var[i] += c_std_err ** 2 / n_batch
+            gtp_var[i] += p_std_err ** 2 / n_batch
+            print(f"Data set average concurrence iteration {i}: {c_avg} +/- {np.sqrt(c_std_err)}")
+            print(f"Data set average probability iteration {i}: {p_avg} +/- {np.sqrt(p_std_err)}")
+
+    res = np.array(best_concurrences), np.real(all_probs), gate_params, points, gtc_mean, gtp_mean, gtp_var, gtp_var, \
+          all_c
+
+    return res
+
+
+def test_optimized_protocol(dm_sample, n_iter, n_all, proj_vec, gate_params, gate_name, n_comp_1):
+    gtc_mean = np.zeros(n_iter)
+    gtp_mean = np.zeros(n_iter)
+    gtc_var = np.zeros(n_iter)
+    gtp_var = np.zeros(n_iter)
+    all_c = np.zeros((n_all, n_iter))
+
+    c_std_err = jnp.std(jax.vmap(concurrence)(dm_sample)) / np.sqrt(n_all - 1)
+    p_std_err = jnp.std(jax.vmap(success_prob)(dm_sample)) / np.sqrt(n_all - 1)
+    gtc_var[0] += c_std_err ** 2
+    gtp_var[0] += p_std_err ** 2
+    gtp_mean[0] += jnp.sum(jax.vmap(success_prob)(dm_sample)) / n_all
+    all_c[:, 0] = jax.vmap(concurrence)(dm_sample)
+    gtc_mean[0] += jnp.sum(all_c[:, 0]) / n_all
+
+    nr = purified_dms(dm_sample, general_2q_quantum_operation(proj_vec),
+                      general_2q_quantum_operation(proj_vec))
+
+    print(f"Data set average concurrence at the start: {gtc_mean[0]} +/- {np.sqrt(c_std_err)}")
 
     for i in range(1, n_iter):
-        c_avg = jnp.sum(jax.vmap(concurrence)(nr)) / n_all
+        all_c[:, i] = jax.vmap(concurrence)(nr)
+        c_avg = jnp.sum(all_c[:, i]) / n_all
         c_std_err = jnp.std(jax.vmap(concurrence)(nr)) / np.sqrt(n_all - 1)
         nr = purified_dms(nr, gen_SU4(gate_params[i][n_comp_1:], gate_name=gate_name),
                           gen_SU4(gate_params[i][:n_comp_1], gate_name=gate_name))
         p_avg = jnp.sum(jax.vmap(success_prob)(nr)) / n_all
         p_std_err = jnp.std(jax.vmap(success_prob)(nr)) / np.sqrt(n_all - 1)
-        gtc_mean[i] = c_avg
-        gtp_mean[i] = p_avg
-        gtc_std[i] = c_std_err
-        gtp_std[i] = p_std_err
-        print(f"Data set average concurrence iteration {i}: {c_avg} +/- {c_std_err}")
-        print(f"Data set average probability iteration {i}: {p_avg} +/- {p_std_err}")
+        gtc_mean[i] += c_avg
+        gtp_mean[i] += p_avg
+        gtc_var[i] += c_std_err ** 2
+        gtp_var[i] += p_std_err ** 2
+        print(f"Data set average concurrence iteration {i}: {c_avg} +/- {np.sqrt(c_std_err)}")
+        print(f"Data set average probability iteration {i}: {p_avg} +/- {np.sqrt(p_std_err)}")
 
-    res = np.array(best_concurrences), np.real(all_probs), best_unitaries, points, gtc_mean, gtp_mean, gtc_std, gtp_std
-
-    return res
+    return gtc_mean, gtp_mean, gtc_var, gtp_var, all_c
 
 
 def plot(data_folder):
