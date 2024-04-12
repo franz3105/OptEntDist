@@ -1,15 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Created on Mon Oct 11 08:32:24 2021
 
-@author: zsolt
-"""
 import numpy as np
 import matplotlib.pyplot as plt
 import jax.numpy as jnp
 import jax
-import qutip as qt
 import jax.scipy as jsp
 import os
 import json
@@ -18,7 +13,8 @@ from jax import value_and_grad, jit
 from cycler import cycler
 from qutip_wrapper import tranformed_mau_state
 from jax_minimize_wrapper import minimize_jax
-from su4gate import gate
+from su4gate import SU4gate
+from jax.scipy.linalg import expm
 
 # JAX configuration
 jax.config.update('jax_platform_name', 'cpu')
@@ -38,7 +34,6 @@ Id4 = jnp.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], dtype=
 X = jnp.array([[0, 1], [1, 0]], dtype=jnp.complex128)
 Y = jnp.array([[0, -1j], [1j, 0]], dtype=jnp.complex128)
 Z = jnp.array([[1, 0], [0, -1]], dtype=jnp.complex128)
-
 Id2 = jnp.array([[1, 0], [0, 1]], dtype=jnp.complex128)
 
 g2 = jnp.array([[0, -1j, 0, 0], [1j, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], dtype=jnp.complex128)
@@ -52,24 +47,28 @@ gell_man_generators = (g2, g3, g5, g8, g10, g15)
 gen_seq = [g3, g2, g3, g5, g3, g10, g3, g2, g3, g5, g3, g2, g3, g8, g15]
 hp_rect = np.pi * np.array(
     [1, 1 / 2, 1, 1 / 2, 1, 1 / 2, 1, 1 / 2, 1, 1 / 2, 1, 1 / 2, 1, 1 / np.sqrt(3), 1 / np.sqrt(6)])
-CNOT = np.exp(1j*np.pi/2)*jnp.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0]], dtype=jnp.complex128)
+CNOT = jnp.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0]], dtype=jnp.complex128)
+
+CNOT_0 = jnp.array([[0, 1, 0, 0], [1, 0, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], dtype=jnp.complex128)  # controlled on zero
+v1 = jnp.array([0, 1 / jnp.sqrt(2), -1 / jnp.sqrt(2), 0], dtype=jnp.complex128)
+v2 = jnp.array([0, 1 / np.sqrt(2), 1 / np.sqrt(2), 0], dtype=jnp.complex128)
+v3 = jnp.array([1 / jnp.sqrt(2), 0, 0, -1 / jnp.sqrt(2)], dtype=jnp.complex128)
+v4 = jnp.array([1 / np.sqrt(2), 0, 0, 1 / np.sqrt(2)], dtype=jnp.complex128)
+bell_states = [v1, v2, v3, v4]
+b3 = jnp.array([[1j, 0.], [0., 1.]], jnp.complex128)
+b1 = (Id2 + 1j * X) / jnp.sqrt(2)
+b_A1A2 = jnp.kron(b1.T.conj(), b1.T.conj()).dot(jnp.kron(b1, b1))
 
 
-# ----------------------------------------------------------------------------------------------------------------------
+# ---------------------------------------------------------------------------------------------------------------------
 
-def get_generators():
-    """ Creates standared generators for SU(4) """
-    clifford_set = [qt.identity(2), qt.sigmax(), qt.sigmay(), qt.sigmaz()]
-    generators = []
-    for sigma_1 in clifford_set:
-        for sigma_2 in clifford_set:
-            generators.append(jnp.array(qt.tensor(sigma_2, sigma_1).full()))
+def generate_projectors():
+    for v in bell_states:
+        # for u in bell_states:
+        yield jnp.outer(v, v)
 
-    del (generators[0])
 
-    return generators
-
-#@jit
+# @jit
 def concurrence(rho: np.ndarray):
     """
     Function computing the concurrence
@@ -80,15 +79,20 @@ def concurrence(rho: np.ndarray):
     YY = jnp.kron(Y, Y)
     rho_tilde = (rho.dot(YY)).dot(rho.conj().dot(YY))
     eigs = -jnp.linalg.eigvals(rho_tilde)
-    eigs = jnp.abs(jnp.sort(jnp.real(eigs))) + 1e-8
-
-    #eigs = jnp.clip(eigs, 1e-6, 1)  # Bounds for numerical stability
+    eigs = jnp.abs(jnp.sort(jnp.real(eigs))) + 1e-15
+    # eigs_max = jnp.max(eigs)
+    # eigs = jnp.clip(eigs, 1e-6, 1)  # Bounds for numerical stability
     comp_arr = jnp.array([0., jnp.sqrt(eigs[0]) - jnp.sqrt(eigs[1]) - jnp.sqrt(eigs[2]) - jnp.sqrt(eigs[3])])
-    #print(comp_arr)
+    # comp_arr = jnp.array([0., 2*eigs_max - jnp.sum(eigs)])
+    # comp_arr = jnp.max(jnp.array([2*eigs_max - jnp.sum(eigs), 0]))
+    # print(jnp.sum(eigs))
+
+    # print(comp_arr)
 
     return jnp.max(comp_arr)
 
-#@jit
+
+# @jit
 def partial_trace(rho: np.ndarray, subscripts='ijklmnkl->ijmn'):
     """
 
@@ -98,6 +102,20 @@ def partial_trace(rho: np.ndarray, subscripts='ijklmnkl->ijmn'):
     """
     rho_rs = jnp.reshape(rho, [2, 2, 2, 2, 2, 2, 2, 2])
     rho_pt = jnp.einsum(subscripts, rho_rs).reshape(4, 4)
+
+    return rho_pt
+
+
+def partial_transpose(rho: np.ndarray, subscripts='ijkl->ijlk'):
+    """
+
+    :param rho: Input density matrix
+    :param subscripts: superscripts describing the partial transpose
+    :return: partial transpose
+    """
+    # print(rho.shape)
+    rho_rs = jnp.reshape(rho, [2, 2, 2, 2])
+    rho_pt = jnp.einsum(subscripts, rho_rs.conj().T).reshape(4, 4)
 
     return rho_pt
 
@@ -118,7 +136,8 @@ def tensor(qubit_list):
 
     return s
 
-#@jit
+
+# @jit
 def gell_man_U(a: np.ndarray):
     """
     General SU(4) Euler parametrization (see su4gate.py)
@@ -132,30 +151,65 @@ def gell_man_U(a: np.ndarray):
 
     return o
 
-#@jit
-def gen_SU4(a: np.ndarray):
+
+def general_2q_quantum_operation(a):
+    p_gen = generate_projectors()
+    P = jnp.zeros((4, 4), jnp.complex128)
+
+    for i in range(a.shape[0]):
+        proj = next(p_gen)
+        P += proj * a[i]
+
+    return P
+
+
+# @jit
+def gen_SU4(a: np.ndarray, gate_name="SU4"):
     """
     Analytic expression of a SU(4) gate derived from Mathematica.
+    :param gate_name: Name of the gate.
     :param a: gate parameter array.
     :return: general SU(4) unitary
     """
 
-    return gate(*list(a))
+    if gate_name == "SU4":
+        # U = general_2q_quantum_operation(a)
+        U = SU4gate(*(list(a)))
+    elif gate_name == "circuit":
+        UA = expm(1j * a[0] * Z).dot(expm(1j * a[1] * Y)).dot(expm(1j * a[2] * Z))
+        UB = expm(1j * a[3] * Z).dot(expm(1j * a[4] * Y)).dot(expm(1j * a[5] * Z))
+        UA2 = expm(1j * a[6] * Z).dot(expm(1j * a[7] * Y)).dot(expm(1j * a[8] * Z))
+        UB2 = expm(1j * a[9] * Z).dot(expm(1j * a[10] * Y)).dot(expm(1j * a[11] * Z))
 
-#@jit
-def apply_entangling_gate(rho: np.ndarray, unitary_gate: np.ndarray):
+        R = jnp.kron(UA, UB)
+        R2 = jnp.kron(UA2, UB2)
+        U = R.dot(CNOT).dot(R2.conj().T)  # .dot(U_ent_3).dot(R4)
+    elif gate_name == "cnot":
+        U = CNOT
+    else:
+        raise ValueError("Unknown gate type.")
+
+    return U
+
+
+def apply_entangling_gate(rho_1: np.ndarray, rho_2: np.ndarray, unitary_gate: np.ndarray, unitary_gate_2: np.ndarray):
     """
-
-    :param rho: Input density matrix on system A (or B).
+    Apply entangling gate to the input density matrix.
+    :param rho_2: Input density matrix on system A (or B).
+    :param rho_1: Input density matrix on system B (or A).
+    :param unitary_gate_2:
     :param unitary_gate: Entangling gate.
     :return: New density matrix after operation.
     """
+
     # if a is not 3D vector, then this has to be changed
     G_A = unitary_gate
     Gc_A = unitary_gate.conjugate().T
+    G_B = unitary_gate_2
+    Gc_B = unitary_gate_2.conjugate().T
 
     # print(G)
-    rho_f = jnp.kron(rho, rho)
+    rho_f = jnp.kron(rho_1, rho_2)
     U = jnp.array([[1, 0, 0, 0], [0, 0, 1, 0], [0, 1, 0, 0], [0, 0, 0, 1]], dtype=jnp.complex128)
     UU = jnp.kron(jnp.kron(Id2, U), Id2)
 
@@ -166,72 +220,82 @@ def apply_entangling_gate(rho: np.ndarray, unitary_gate: np.ndarray):
     UAc = (UU.dot(MAc)).dot(UU)
 
     # side B
-    MB = jnp.kron(Id4, G_A)
-    MBc = jnp.kron(Id4, Gc_A)
+    MB = jnp.kron(Id4, G_B)
+    MBc = jnp.kron(Id4, Gc_B)
     UB = (UU.dot(MB)).dot(UU)
     UBc = (UU.dot(MBc)).dot(UU)
 
     rho_t = (((UA.dot(UB)).dot(rho_f)).dot(UBc)).dot(UAc)
 
+    # rho_t = rho_t / (rho_t.trace() + 1e-15)
+
     return rho_t
 
-#@jit
-def purification(rho: np.ndarray, unitary_gate: np.ndarray):
-    """
 
+# @jit
+def purification(rho_A: np.ndarray, unitary_gate_1: np.ndarray, unitary_gate_2: np.ndarray, meas_p="argmax"):
+    """
+    Purification protocol. Returns the concurrence, probability, purified density matrix and argmax index of concurrence.
+
+    :param rho_B: 
+    :param rho_A:
+    :param unitary_gate_2:
+    :param unitary_gate_1:
     :param rho: Input density matrix on system A (or B).
-    :param unitary_gate: Entangling gate.
     :return: max concurrence, max probability, purified density matrix, argmax index of concurrence.
     Here we "use" an "argmax policy" for the probability.
-    """
-    rho_t = apply_entangling_gate(rho, unitary_gate)
-    # print(unitary_gate)
 
-    proj_list = [p00, p01]
+    """
+    rho_t = apply_entangling_gate(rho_A, rho_A, unitary_gate_1, unitary_gate_2)
+
+    proj_list = [p00, p01, p10, p11]
     c_arr = jnp.array([0, ] * len(proj_list), dtype=jnp.float64)
     p_arr = jnp.array([0, ] * len(proj_list), dtype=jnp.float64)
-    rf_arr = jnp.zeros((len(proj_list), rho.shape[0], rho.shape[1]), dtype=jnp.complex128)
+    rf_arr = jnp.zeros((len(proj_list), rho_A.shape[0], rho_A.shape[1]), dtype=jnp.complex128)
 
     for i_p, p in enumerate(proj_list):
         proj = jnp.kron(Id4, p)
-        rho_new = (proj.dot(rho_t)).dot(proj)
-        prob = jnp.real((rho_new.trace() + 1e-6))
-        # print(rho_new)
-        # print(rho_new.trace())
-        rho_new = rho_new / (rho_new.trace() + 1e-6)
+        p_new = jnp.trace(rho_t)
+
+        rho_new_t = (proj.dot(rho_t)).dot(proj)
+        prob = jnp.real(p_new * (rho_new_t.trace()))
+
+        rho_new = rho_new_t / (rho_new_t.trace() + 1e-15)
         rf = partial_trace(rho_new)
-        # print(concurrence(rf))
         c_arr = c_arr.at[i_p].set(concurrence(rf))
         p_arr = p_arr.at[i_p].set(prob)
         rf_arr = rf_arr.at[i_p, :, :].set(rf)
 
-    idx_pmax = jnp.argmax(c_arr)
-    # idx_pmin = jnp.argmin(c_arr)
+    if meas_p == "argmax":
+        idx_pmax = jnp.argmax(c_arr)
+    elif meas_p == "zero":
+        idx_pmax = 0
+    else:
+        raise NotImplementedError("This measurement selection strategy index is not available")
+    print(meas_p)
+
     c_max = jnp.real(c_arr)[idx_pmax]
-    # print(c_max)
-    # print(jnp.round(jnp.real(p_arr),3))
     p_cmax = p_arr[idx_pmax]
     rf_out = rf_arr[idx_pmax]
-
-    # print(c_max)
 
     return c_max, jnp.real(p_cmax), rf_out, idx_pmax
 
 
-def purified_dms(rhos: np.ndarray, unitary_gate: np.ndarray):
+def purified_dms(rhos: np.ndarray, unitary_gate_1: np.ndarray, unitary_gate_2: np.ndarray, meas_p="argmax"):
     """
+    Returns purified denstiy matrices
 
+    :param unitary_gate_1: Entangling gate 1 (system A).
+    :param unitary_gate_2: Entangling gate 2 (system B).
     :param rhos: Batch of input density matrices.
-    :param unitary_gate: Unitary entangling gate.
-    :return: batch of concurrences.
+    :return: Array of density matrices.
     """
-    def sample_single_concurrence(dm):
-        return purification(dm, unitary_gate)[2]
 
-    return jax.vmap(sample_single_concurrence)(rhos)
+    def sample_new_dm(dm):
+        return purification(dm, unitary_gate_1, unitary_gate_2, meas_p=meas_p)[2]
 
+    return jax.vmap(sample_new_dm)(rhos)
 
-# grid type
 
 def double_Integral(xmin, xmax, ymin, ymax, nx, ny, A):
     """
@@ -260,6 +324,10 @@ def double_Integral(xmin, xmax, ymin, ymax, nx, ny, A):
                  + 0.25 * (A_ul + A_ur + A_dl + A_dr))
 
     # Rayleigh distribution, 2D, rotational symmetry
+
+
+def f(x, sigma=1):
+    return 1 / (2 * np.pi * sigma) ** 0.5 * np.exp(0.5 * (x[0] ** 2 + x[1] ** 2) / sigma ** 2)
 
 
 def av_inconcurrence(n: jnp.int64, x: jnp.ndarray, y: jnp.ndarray):
@@ -294,7 +362,6 @@ def av_inconcurrence(n: jnp.int64, x: jnp.ndarray, y: jnp.ndarray):
 def generate_rhos(x: jnp.ndarray, y: jnp.ndarray):
     """
     Creates a batch of xy-dependent density matrices.
-
     :param x: array of x-coordinates
     :param y: array of y-coordinates
     :return: batch of xy-dependent density matrices.
@@ -315,81 +382,108 @@ def generate_rhos(x: jnp.ndarray, y: jnp.ndarray):
     return jax.vmap(rho)(xy_points)
 
 
-def f(x, sigma=1):
-    return 1#1/(2*np.pi*sigma)**0.5*np.exp(0.5 * (x[0]**2 + x[1]**2) / sigma ** 2)
-
-
-def mauricio_av_inconcurrence(a: jnp.ndarray, x_arr: np.ndarray):
+def mauricio_av_inconcurrence(a: jnp.ndarray, x_arr: np.ndarray, gate_name="SU4", meas_p="argmax"):
     """
     Average inconcurrence of the transformed state that can be purified in 1 step.
     :param a: entangling gate parameters
     :param x_arr: array of state parameters.
     :return: average concurrence (sampled)
     """
-    gate_a = gen_SU4(a)
+    n_par = int(a.shape[0] / 2)
+    gate_a = gen_SU4(a[:n_par], gate_name=gate_name)
+    gate_b = gen_SU4(a[n_par:], gate_name=gate_name)
 
-    #@jit
+    # @jit
     def sample_single_concurrence(x):
         dm = tranformed_mau_state(x)
-        return (1 - purification(dm, gate_a)[0]) * f(x)
+        return (1 - purification(dm, gate_a, gate_b, meas_p=meas_p)[0]) * f(x)
 
     A = jax.vmap(sample_single_concurrence)(x_arr)
 
     return jnp.mean(A, axis=0)
 
 
-def sampled_av_inconcurrence(a: jnp.ndarray, dm_batch: np.ndarray):
+def sampled_av_inconcurrence(a: jnp.ndarray, dm_batch: np.ndarray, gate_name="SU4", meas_p="argmax"):
     """
     Average inconcurrence of a batch of density matrices.
+    :param gate_name:
     :param dm_batch:  batch of density matrices
     :param a: entangling gate parameters
     :return: average concurrence (sampled)
     """
-    gate_1 = gen_SU4(a)
+    n_par = int(a.shape[0] / 2)
+    gate_1 = gen_SU4(a[:n_par], gate_name=gate_name)
+    gate_2 = gen_SU4(a[n_par:], gate_name=gate_name)
 
-    #@jit
+    # @jit
     def sample_single_concurrence(dm):
-        return 1 - purification(dm, gate_1)[0]
+        return purification(dm, gate_1, gate_2, meas_p=meas_p)[0]  # / concurrence(dm)
+
+    A = jax.vmap(sample_single_concurrence)(dm_batch)
+
+    return jnp.sum(A)
+
+
+def lower_concurrence_bound(dm):
+    """
+    Computes the lower bound for the concurrence of a density matrix.
+    :param dm: density matrix.
+    :return: lower bound for the concurrence.
+    """
+    c_low = jnp.array([0, jnp.abs(dm[1, 2]) - jnp.sqrt(jnp.real(dm[0, 0] * dm[3, 3]))])
+
+    return jnp.max(c_low)
+
+
+def purity(dm):
+    """
+    Computes the purity of a density matrix.
+    :param dm:  density matrix.
+    :return:
+    """
+    eigs_ppt = jnp.linalg.eigvalsh(partial_transpose(dm))
+
+    if jnp.greater_equal(eigs_ppt, 0):
+        return jnp.real(jnp.trace(dm.dot(dm)))
+    else:
+        return 0
+
+
+def sampled_av_gate_inconcurrence(dm_batch: np.ndarray, gate_1=CNOT, gate_2=CNOT, meas_p="argmax"):
+    """
+    Average inconcurrence of a batch of density matrices.
+    :param gate_2:
+    :param gate_1:
+    :param dm_batch:  batch of density matrices
+    :param a: entangling gate parameters
+    :return: average concurrence (sampled)
+    """
+
+    def sample_single_concurrence(dm):
+        return 1 - purification(dm, gate_1, gate_2, meas_p=meas_p)[0]
 
     A = jax.vmap(sample_single_concurrence)(dm_batch)
 
     return jnp.mean(A, axis=0)
 
-def sampled_av_cnot_inconcurrence(dm_batch: np.ndarray):
-    """
-    Average inconcurrence of a batch of density matrices.
-    :param dm_batch:  batch of density matrices
-    :param a: entangling gate parameters
-    :return: average concurrence (sampled)
-    """
-    gate_1 = CNOT
 
-    #@jit
-    def sample_single_concurrence(dm):
-        return 1 - purification(dm, gate_1)[0]
-
-    A = jax.vmap(sample_single_concurrence)(dm_batch)
-
-    return jnp.mean(A, axis=0)
-
-def sampled_av_probability(a: jnp.ndarray, dm_batch: np.ndarray):
+def sampled_av_probability(a: jnp.ndarray, dm_batch: np.ndarray, gate_name="SU4", meas_p="argmax"):
     """
     Average probability of a batch of density matrices.
     :param dm_batch:  batch of density matrices
     :param a: entangling gate parameters
     :return: average probability and its std (sampled)
     """
-    gate = gen_SU4(a)
+    n_par = int(a.shape[0] / 2)
+    gate_1 = gen_SU4(a[:n_par], gate_name=gate_name)
+    gate_2 = gen_SU4(a[n_par:], gate_name=gate_name)
 
-    # print(unitary_gate.dot(unitary_gate.T.conjugate()))
+    def sample_single_prob(dm):
+        return purification(dm, gate_1, gate_2, meas_p=meas_p)[1]
 
-    #@jit
-    def sample_single_concurrence(dm):
-        return 2 * purification(dm, gate)[1]
+    A = jax.vmap(sample_single_prob)(dm_batch)
 
-    A = jax.vmap(sample_single_concurrence)(dm_batch)
-
-    return A, jnp.sqrt(jnp.var(A, axis=0))
+    return jnp.mean(A, axis=0)  # , jnp.sqrt(jnp.var(A, axis=0))
 
 
 def werner_sample(werner_state, n_points, f_min, f_max):
@@ -459,6 +553,15 @@ def xy_state(x_array, y_array):
     return dm_sample, (x_array, y_array)
 
 
+def success_prob(rho):
+    c = concurrence(rho)
+
+    prob = jnp.real(jnp.trace(jnp.dot(p00, rho)))
+    prob_succ = jnp.where(c > 0, prob, 0)
+
+    return prob_succ
+
+
 def xy_state_rot(x_array, y_array):
     """
     Returns batch of rotated XY states over a given 2d interval defined by x_array and y_array.
@@ -479,10 +582,14 @@ def xy_state_rot(x_array, y_array):
     return dms, (x_array, y_array)
 
 
-def optimize_protocol(dm_start, points, n_iter, n_guesses, n_components):
+def optimize_protocol(dm_start_list, points, n_iter, n_guesses, n_components, gate_name="SU4", proj_vec=np.zeros(4),
+                      n_idx=None, meas_p="argmax"):
     """
 
-    :param dm_start: Initial batch of density matrices.
+    :param n_idx: Number of points to sample from the initial batch.
+    :param proj_vec: Projection vector for the parametrization.
+    :param gate_name: Type of parametrization (Euler or SU(4))
+    :param dm_start_list: Initial batch of density matrices.
     :param points: Number of sampled points
     :param n_iter: Number of protocol iterations
     :param n_guesses: Number of guesses per iteration
@@ -494,64 +601,89 @@ def optimize_protocol(dm_start, points, n_iter, n_guesses, n_components):
             - best_unitaries: Best unitaries for each iteration (arg of best_concurrences).
             - points: Tuples of arrays of parameters
     """
-    # Sample points on the circle
 
-    gate_params = [np.zeros(n_components, dtype=jnp.float64)]
-    n_points = dm_start.shape[0]
-    best_x = np.zeros(n_components)
-    best_ing = None
-    new_rhos = dm_start
-    opt_curves = np.zeros((5000, n_iter+1, n_guesses), dtype=jnp.float64)
-    concurrences = []
-    plot_lines = []
-    all_probs = np.zeros((n_points, n_iter+1))
-    best_concurrences = np.zeros(n_iter+1)
-    best_unitaries = np.zeros((n_iter+1, 16), dtype=np.complex128)
-    prob_avg = []
-    #np.random.seed(0)
+    n_batch = len(dm_start_list)  # Number of data sets used
+    gate_params = [np.zeros(n_components, dtype=jnp.float64)]  # Initial guess for the gate parameters
+    n_points = dm_start_list[0].shape[0]  # Number of points in the data set
+    best_x = np.zeros(n_components)  # Best gate parameters
+    concurrences = []  # List of concurrences
+    all_probs = np.zeros((n_points, n_iter + 1))  # Array of probabilities
+    best_concurrences = np.zeros(n_iter + 1)  # Array of best concurrences
+
     cnot = False
+    if gate_name == "cnot":
+        cnot = True
 
-    for it in range(1, n_iter+1):
+    if n_idx is None:  # Number of points to sample from the initial batch
+        n_idx = 1000
+
+    # Samples density matrix in the data set
+    idx_random = np.random.choice(points[0].shape[0], n_points, replace=False)[:n_idx]  # Randomly sample points
+    n_comp_1 = int(n_components / 2)  # Number of parameters for the first gate
+    rhos = dm_start_list[0][idx_random, ::]  # Sampled density matrices
+
+    # If only unitaries are used, then don't apply projector, otherwise apply projector and measure
+    if np.not_equal(proj_vec, np.ones(4)).any():
+        print("with projector...")
+        proj_rhos = purified_dms(dm_start_list[0], general_2q_quantum_operation(proj_vec),
+                                 general_2q_quantum_operation(proj_vec), meas_p=meas_p)
+    else:
+        print("without projector...")
+        proj_rhos = dm_start_list[0]
+
+    print(" DM shapes: ", proj_rhos.shape)
+
+    # Checks traces
+    pr_tr = jnp.trace(proj_rhos, axis1=1, axis2=2)
+    print("Traces:", pr_tr)
+
+    # For the optimization, keep only the density matrices with non-zero concurrence (but compute the average over
+    # all the density matrices). This is done to avoid numerical issues with the concurrence. At start, around
+    # 25 % of the states have concurrence zero before any operation is applied.
+
+    c_r = jax.vmap(concurrence)(rhos)  # Compute concurrence for the sampled density matrices
+    idx_non_zero = np.where(c_r > 1e-15)[0]  # Keep only the density matrices with non-zero concurrence
+    rhos = proj_rhos[idx_non_zero, ::]  # Keep only the density matrices with non-zero concurrence
+    n_all = 1e6  # For the average over the entire data set.
+
+    for it in range(1, n_iter):
         print(f"Iteration {it}/{n_iter}")
 
+        # Define cost function based on rhos and gate as function of gate angles
         def average_cost_function(a):
-            # r_out = purified_dms(new_rhos, general_U(a[:n_components]))
-            #av_c = sampled_av_inconcurrence(a, new_rhos)
-            if cnot:
-                av_c = sampled_av_cnot_inconcurrence(new_rhos)
-            else:
-                av_c = sampled_av_inconcurrence(a, new_rhos)
+            nr = rhos
 
-            # new_rhos = purified_dms(new_rhos, general_U(best_x))[:, 0, :, :]
+            if not cnot:
+                av_c = 1 - sampled_av_inconcurrence(a, nr, gate_name=gate_name, meas_p=meas_p) / n_idx  # + \
+                # 0.01 * (1 - sampled_av_probability(a, nr, gate_name=gate_name) / n_idx)
+            else:
+                av_c = sampled_av_gate_inconcurrence(nr, CNOT, CNOT, gate_name=gate_name, meas_p=meas_p) / n_idx
 
             return av_c
 
-        def all_prob(a):
+        def print_cost(x):
+            print(f"Cost: {average_cost_function(x)}")
 
-            av_p = sampled_av_probability(a, new_rhos)[0]
-            return av_p
-
+        # Cost function and gradient
         cost_and_grad = value_and_grad(average_cost_function)
 
         c_start = 1 - average_cost_function(gate_params[0])
-
         best_fun = 1 - c_start
-        print(f"Initial concurrence iteration {it}: {best_fun}")
-        best_concurrences[0] = c_start
-        #print(f"CNOT concurrence: {1 - sampled_av_cnot_inconcurrence(new_rhos)}")
+        print(f"Initial concurrence iteration {it}: {c_start}")
+
+        if it == 1:
+            best_concurrences[0] = c_start
 
         for i_ng in range(n_guesses):
-            if it == 1:  # Use this ansatz for the XY state, then it becomes easier to find the
-            # first good guess for the optimization. This was found during our experiments. It can be found also under
-            # normal circumstances, but it requires running the algorithm multiple times with lots of seeds.
-                x0 = np.array([1.27223927, 1.8222995,  1.01031067, 0.7565204,  1.91471685, 1.37198244,
-                      0.11381644, 1.04697845, 0.92621291, 0.46467374, 1.10616393, 0.4426136,
-                      1.2732354, 0.36559595, 1.35753604])
+
+            # Initial guess for the opitmization
+            if gate_name == "SU4":  # Euler angle parametrization
+                x0 = np.random.uniform(np.zeros(n_components), np.append(hp_rect, hp_rect), size=(n_components,))
             else:
-                x0 = np.random.uniform(np.zeros(n_components), hp_rect, size=(n_components,))
-            res = minimize_jax(cost_and_grad, x0=x0, method="l-bfgs-b", jac=True)
-            print(f"Best inconcurrence guess {i_ng}: {res.fun}")
-            print(res.x)
+                x0 = 2 * np.pi * np.random.randn(n_components)
+
+            res = minimize_jax(cost_and_grad, x0=x0, method="l-bfgs-b", jac=True, callback=print_cost,
+                               options={"maxiter": 1000})
 
             if res.fun < best_fun:
                 best_fun = res.fun
@@ -559,29 +691,131 @@ def optimize_protocol(dm_start, points, n_iter, n_guesses, n_components):
                 concurrences.append(1 - res.fun)
                 best_ing = i_ng
 
-            if best_fun < 1e-2:
-                break
-
-        all_probs[:, it] = all_prob(best_x)
-        print(f"Best concurrence iteration {it}: {1 - average_cost_function(best_x)}")
-        gate_params.append(best_x)
-        best_unitaries[it, :] = gen_SU4(best_x).flatten()
-        #print(gen_SU4(best_x))
-        best_concurrences[it] = 1 - best_fun
-        print(best_concurrences)
-        prob_avg.append(np.mean(all_prob(best_x), axis=0))
+            print(f"Best inconcurrence guess {i_ng}: {res.fun}")
 
         if cnot:
-            new_rhos = purified_dms(new_rhos, CNOT)
+            rhos = purified_dms(rhos, CNOT, CNOT, meas_p=meas_p)  # Apply CNOT gate
         else:
-            new_rhos = purified_dms(new_rhos, gen_SU4(best_x))
+            rhos = purified_dms(rhos, gen_SU4(best_x[:n_comp_1], gate_name=gate_name),
+                                gen_SU4(best_x[n_comp_1:], gate_name=gate_name), meas_p=meas_p)  # Apply SU(4) gate
 
+        # Average over batch of density matrices for training
+        c_new = jnp.sum(jax.vmap(concurrence)(rhos)) / n_idx
+        c_std_err = jnp.std(jax.vmap(concurrence)(rhos)) / np.sqrt(n_idx)
+        p_new = jnp.sum(jax.vmap(success_prob)(rhos)) / n_idx
+        p_std_err = jnp.std(jax.vmap(success_prob)(rhos)) / np.sqrt(n_idx)
 
+        print(rf"Average concurrence: {c_new} +/- {c_std_err}")
+        print(rf"Average probability: {p_new} +/- {p_std_err}")
 
-    res = np.array(best_concurrences), np.array(np.real(prob_avg)), np.real(
-        all_probs), best_unitaries, points
+        gate_params.append(best_x)  # Save best gate parameters
+        best_concurrences[it] = 1 - best_fun  # Save best concurrence
+
+        if best_fun < 1e-2:
+            break
+
+    gtc_mean = np.zeros(n_iter)
+    gtp_mean = np.zeros(n_iter)
+    gtc_var = np.zeros(n_iter)
+    gtp_var = np.zeros(n_iter)
+    all_c = np.zeros((dm_start_list[0].shape[0], n_iter))
+
+    for ib in range(n_batch):
+        print(f"Data set {ib}")
+        # Averages over the entire data set
+
+        c_std_err = jnp.std(jax.vmap(concurrence)(dm_start_list[ib])) / np.sqrt(n_all)  # Standard error concurrence
+        p_std_err = jnp.std(jax.vmap(success_prob)(dm_start_list[ib])) / np.sqrt(n_all)  # Standard error probability
+        gtc_var[0] += c_std_err ** 2 / n_batch  # Variance concurrence
+        gtp_var[0] += p_std_err ** 2 / n_batch  # Variance probability
+        gtp_mean[0] += jnp.sum(jax.vmap(success_prob)(dm_start_list[ib])) / (n_all * n_batch)  # Average probability
+        all_c[:, 0] = jax.vmap(concurrence)(dm_start_list[ib])  # All concurrences
+        gtc_mean[0] += jnp.sum(all_c[:, 0]) / (n_all * n_batch)  # Average concurrence
+
+        if ib == 0:
+            nr = proj_rhos
+        else:
+            if np.not_equal(proj_vec, np.ones(4)).any(): # If the projector is not the identity
+                nr = purified_dms(dm_start_list[ib], general_2q_quantum_operation(proj_vec),
+                                  general_2q_quantum_operation(proj_vec), meas_p=meas_p)
+            else:
+                nr = dm_start_list[ib] # If the projector is the identity
+
+        print(f"Data set average concurrence at the start: {gtc_mean[0]} +/- {c_std_err}")
+
+        for i in range(1, n_iter):
+            all_c[:, i] = jax.vmap(concurrence)(nr)
+            c_avg = jnp.sum(all_c[:, i]) / n_all
+            c_std_err = jnp.std(jax.vmap(concurrence)(nr)) / np.sqrt(n_all)
+            nr = purified_dms(nr, gen_SU4(gate_params[i][n_comp_1:], gate_name=gate_name),
+                              gen_SU4(gate_params[i][:n_comp_1], gate_name=gate_name), meas_p=meas_p)
+            p_avg = jnp.sum(jax.vmap(success_prob)(nr)) / n_all
+            p_std_err = jnp.std(jax.vmap(success_prob)(nr)) / np.sqrt(n_all)
+            gtc_mean[i] += c_avg / n_batch
+            gtp_mean[i] += p_avg / n_batch
+            gtc_var[i] += c_std_err ** 2 / n_batch
+            gtp_var[i] += p_std_err ** 2 / n_batch
+            print(f"Data set average concurrence iteration {i}: {c_avg} +/- {c_std_err}")
+            print(f"Data set average probability iteration {i}: {p_avg} +/- {p_std_err}")
+
+    res = np.array(best_concurrences), np.real(all_probs), gate_params, points, gtc_mean, gtp_mean, gtp_var, gtp_var, \
+          all_c
 
     return res
+
+
+def test_optimized_protocol(dm_sample, n_iter, n_all, proj_vec, gate_params, gate_name, n_comp_1, meas_p="argmax"):
+    """
+    Tests the optimized protocol on a given data set.
+    :param dm_sample: DataSet
+    :param n_iter: Number of iterations.
+    :param n_all: Number of samples in the data set.
+    :param proj_vec: Projection vector.
+    :param gate_params: List of optimized gate parameters.
+    :param gate_name: Type of gate parametrization.
+    :param n_comp_1: Number of parameters for the first gate.
+    :param meas_p: Measurement protocol.
+    :return:
+    """
+
+    gtc_mean = np.zeros(n_iter)
+    gtp_mean = np.zeros(n_iter)
+    gtc_var = np.zeros(n_iter)
+    gtp_var = np.zeros(n_iter)
+    all_c = np.zeros((n_all, n_iter))
+
+    c_std_err = jnp.std(jax.vmap(concurrence)(dm_sample)) / np.sqrt(n_all)
+    p_std_err = jnp.std(jax.vmap(success_prob)(dm_sample)) / np.sqrt(n_all)
+    gtc_var[0] += c_std_err ** 2
+    gtp_var[0] += p_std_err ** 2
+    gtp_mean[0] += jnp.sum(jax.vmap(success_prob)(dm_sample)) / n_all
+    all_c[:, 0] = jax.vmap(concurrence)(dm_sample)
+    gtc_mean[0] += jnp.sum(all_c[:, 0]) / n_all
+
+    if np.not_equal(proj_vec, np.ones(4)).any():
+        nr = purified_dms(dm_sample, general_2q_quantum_operation(proj_vec),
+                          general_2q_quantum_operation(proj_vec), meas_p=meas_p)
+    else:
+        nr = dm_sample
+
+    print(f"Data set average concurrence at the start: {gtc_mean[0]} +/- {c_std_err}")
+
+    for i in range(1, n_iter):
+        all_c[:, i] = jax.vmap(concurrence)(nr)
+        c_avg = jnp.sum(all_c[:, i]) / n_all
+        c_std_err = jnp.std(jax.vmap(concurrence)(nr)) / np.sqrt(n_all)
+        nr = purified_dms(nr, gen_SU4(gate_params[i][n_comp_1:], gate_name=gate_name),
+                          gen_SU4(gate_params[i][:n_comp_1], gate_name=gate_name), meas_p=meas_p)
+        p_avg = jnp.sum(jax.vmap(success_prob)(nr)) / n_all
+        p_std_err = jnp.std(jax.vmap(success_prob)(nr)) / np.sqrt(n_all)
+        gtc_mean[i] += c_avg
+        gtp_mean[i] += p_avg
+        gtc_var[i] += c_std_err ** 2
+        gtp_var[i] += p_std_err ** 2
+        print(f"Data set average concurrence iteration {i}: {c_avg} +/- {c_std_err}")
+        print(f"Data set average probability iteration {i}: {p_avg} +/- {p_std_err}")
+
+    return gtc_mean, gtp_mean, gtc_var, gtp_var, all_c
 
 
 def plot(data_folder):
@@ -660,7 +894,7 @@ def plot(data_folder):
 
 
 def test_unitary():
-    u = np.loadtxt('best_unitaries.txt', dtype=np.complex_).reshape(8, 4, 4)
+    u = np.loadtxt('best_unitaries.txt', dtype=np.complex128).reshape(8, 4, 4)
     for i in range(5):
         print("Unitary:", u[i, ::])
         print("Identity:", np.round(u[i, ::].dot(u[i, ::].T.conjugate()), 2))
