@@ -1,21 +1,26 @@
-import numpy as np
-import pandas as pd
 import jax
 import jax.numpy as jnp
-import numpy as np
 import pandas as pd
-from numpy import array
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
-import matplotlib.pyplot as plt
 import os
 
-
 def tr_map(x):
+    """
+    Compute the trace of a list of matrices.
+    :param x: List of matrices.
+    :return: List of traces.
+    """
     return jax.vmap(lambda a: jnp.trace(a))(x)
 
 
-def load_data(dm_filename, a_vectors_filename, N=int(1e6), a_size=32):
+def load_data(dm_filename, a_vectors_filename, N=int(1e6), a_size=30):
+    """
+    Load data from files.
+    :param dm_filename: File name for density matrices.
+    :param a_vectors_filename: File name for a vectors.
+    :param N: Number of samples.
+    :param a_size: Dimension of a vectors.
+    :return:
+    """
     dm_N = pd.read_csv(dm_filename, dtype='float64')
     a_N = pd.read_csv(a_vectors_filename, dtype='float64')
     dm_N_real_imag = dm_N.values.reshape(N, 4, 4, 2)

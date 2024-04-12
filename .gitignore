@@ -4,3 +4,7 @@ backup/black_box_es.py
 
 /backup/
 /__pycache__/
+/data/ppo_concurrence_tensorboard/
+/plots/
+/.vscode/
+/.pytest_cache/
